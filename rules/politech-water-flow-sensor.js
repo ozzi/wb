@@ -1,4 +1,4 @@
-function makePolitechWaterFlowSensor(
+function makePumpPWMController(
     name,
     inputFreqTopicName
 ) {
@@ -14,7 +14,7 @@ function makePolitechWaterFlowSensor(
             min: 0
         },
         flow: {
-            title: "Flow m/h",
+            title: "Flow m3/h",
             type: "water_flow",
             value: 0,
             readonly: true
@@ -32,7 +32,7 @@ function makePolitechWaterFlowSensor(
     var waterFlowTopicName = deviceName + "/flow"
     var waterFlowLMTopicName = deviceName + "/flow_lm"
     
-    defineRule("weather-compensated-automation-" + name, {
+    defineRule("politech-water-flow-automation-" + name, {
       whenChanged: [
         inputFreqTopicName,
         dividerTopicName
@@ -53,4 +53,4 @@ function makePolitechWaterFlowSensor(
   }
   
   
-  makePolitechWaterFlowSensor("pool-heat-exchanger", "wb-mcm8_238/Input 1 freq");
+  makePumpPWMController("pool-heat-exchanger", "wb-mcm8_238/Input 1 freq");
