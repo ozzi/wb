@@ -1,0 +1,234 @@
+{
+    "device_type": "tpl7_OWEN-TRM12",
+    "group": "g-group",
+    "device": {
+        "name": "OWEN-TRM12",
+        "id": "owen-trm12",
+        "max_read_registers": 0,
+        "channels": [
+            {
+                "name": "Status",
+                "id": "status",
+                "reg_type": "input",
+                "address": 4104,
+                "format": "u16"
+            },
+            {
+                "name": "Input value 1",
+                "id": "input-value-1",
+                "reg_type": "input",
+                "address": 4105,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Input value 2",
+                "id": "input-value-2",
+                "reg_type": "input",
+                "address": 4107,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Computed value",
+                "id": "computed-value",
+                "reg_type": "input",
+                "address": 4109,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Set value 1",
+                "id": "set-value-1",
+                "reg_type": "holding",
+                "address": 4111,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Set value 2",
+                "id": "set-value-2",
+                "reg_type": "input",
+                "address": 4113,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Power",
+                "id": "power",
+                "reg_type": "holding",
+                "address": 4115,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Control",
+                "id": "ctrl",
+                "reg_type": "holding",
+                "address": 4117,
+                "format": "u16",
+                "on_value": 1,
+                "off_value": 0,
+                "max": 2
+            },
+            {
+                "name": "Input filter bound",
+                "id": "input-filter-bount",
+                "reg_type": "holding",
+                "address": 261,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Input filter time constant",
+                "id": "input-filter-time-constant",
+                "reg_type": "holding",
+                "address": 263,
+                "format": "u16"
+            },
+            {
+                "name": "Func type",
+                "id": "func-type",
+                "reg_type": "holding",
+                "address": 13,
+                "format": "u16"
+            },
+            {
+                "name": "Func Coef 1",
+                "id": "func-coef-1",
+                "reg_type": "holding",
+                "address": 14,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Func Coef 2",
+                "id": "func-coef-2",
+                "reg_type": "holding",
+                "address": 16,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Logic",
+                "id": "logic",
+                "reg_type": "holding",
+                "address": 608,
+                "format": "u16"
+            },
+            {
+                "name": "PID P",
+                "id": "pid-p",
+                "reg_type": "holding",
+                "address": 640,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "PID I",
+                "id": "pid-i",
+                "reg_type": "holding",
+                "address": 642,
+                "format": "u16"
+            },
+            {
+                "name": "PID D",
+                "id": "pid-d",
+                "reg_type": "holding",
+                "address": 643,
+                "format": "u16"
+            },
+            {
+                "name": "PID USP",
+                "id": "pid-usp",
+                "reg_type": "holding",
+                "address": 645,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "PID Tolerance",
+                "id": "pid-tolerance",
+                "reg_type": "holding",
+                "address": 649,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Min power change",
+                "id": "min-power-change",
+                "reg_type": "holding",
+                "address": 653,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Min output power",
+                "id": "min-output-power",
+                "reg_type": "holding",
+                "address": 655,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Max output power",
+                "id": "max-output-power",
+                "reg_type": "holding",
+                "address": 657,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Rate power change",
+                "id": "rate-power-change",
+                "reg_type": "holding",
+                "address": 659,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Error output power",
+                "id": "error-output-power",
+                "reg_type": "holding",
+                "address": 661,
+                "format": "float",
+                "word_order": "little_endian"
+            },
+            {
+                "name": "Stop output power",
+                "id": "stop-output-power",
+                "reg_type": "holding",
+                "address": 663,
+                "format": "float",
+                "word_order": "little_endian"
+            }
+        ],
+      "translations": {
+	      "ru": {
+		      "OWEN-TRM12": "ОВЕН ТРМ12",
+		      "Status": "Статус прибора",
+		      "Control": "Режим регулирования",
+		      "Power": "Выходная мощность ВУ1",
+		      "Set value 1": "Уставка регулятора для канала 1",
+		      "Set value 2": "Уставка регулятора для канала 2",
+		      "Input value 1": "Входная величина на входе 1",
+		      "Input value 2": "Входная величина на входе 2",
+		      "Computed value": "Вычисленная величина",
+              "PID P": "Полоса пропорциональности ПИД",
+              "PID I": "Интегральная постоянная ПИД",
+              "PID D": "Дифференциальная постоянная ПИД",
+              "Min power change": "Минимальное изменение мощности",
+              "Min output power": "Минимальная выходная мощность",
+              "Max output power": "Максимальная выходная мощность",
+              "Rate power change": "Скорость изменения мощности",
+              "PID Tolerance": "Значение нечуствительности ПИД",
+              "Logic" : "Тип логики работы ЛУ",
+              "Input filter bound" : "Полоса фильтра",
+              "Input filter time constant" : "Постоянная времени фильтра",
+              "Error output power" : "Состояние выхода в режиме Авария",
+              "Stop output power" : "Состояние выхода в режиме Стоп",
+              "PID USP" : "Скорость изменения уставки ПИД- регулятора"
+	      }
+      }
+    }
+}
