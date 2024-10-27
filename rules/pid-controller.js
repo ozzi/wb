@@ -10,25 +10,19 @@
  */
 
 //"use strict";
-var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection) {
+var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutput) {
     this.input = Input;
     this.mySetpoint = Setpoint;
     this.inAuto = false;
-    this.setOutputLimits(0, 255); // default output limits
-    this.SampleTime = 100; // default Controller Sample Time is 0.1 seconds
+    this.setOutputLimits(0, 100);
+    this.SampleTime = 1000;
     this.setTunings(Kp, Ki, Kd);
     this.setControllerDirection(ControllerDirection);
     this.lastTime = this.millis() - this.SampleTime;
-
-    this.ITerm = 0;
-    this.myOutput = 0;
+    this.setIntegral(InitialOutput * this.setDirection);
+    this.setOutput(InitialOutput);
+    this.enableLogging = true;
 };
-
-// Constants for backward compatibility
-PID.AUTOMATIC = 1;
-PID.MANUAL = 0;
-PID.DIRECT = 0;
-PID.REVERSE = 1;
 
 PID.prototype.setInput = function(current_value) {
     this.input = current_value;
@@ -43,13 +37,6 @@ PID.prototype.millis = function() {
     return d.getTime();
 };
 
-/**
- * Compute()
- * This, as they say, is where the magic happens.  this function should be called
- * every time "void loop()" executes.  the function will decide for itself whether a new
- * pid Output needs to be computed.  returns true when the output is computed,
- * false when nothing has been done.
- */
 PID.prototype.compute = function() {
     if (!this.inAuto) {
         return false;
@@ -57,45 +44,29 @@ PID.prototype.compute = function() {
     var now = this.millis();
     var timeChange = (now - this.lastTime);
     if (timeChange >= this.SampleTime) {
-
-        // Compute all the working error variables
         var input = this.input;
         var error = this.mySetpoint - input;
-        this.ITerm += (this.ki * error);
-        var dInput = input - this.lastInput;
-        // Compute PID Output
-        var pPart = this.kp * error;
-        var iPart = this.ITerm;
-        var dPart = this.kd * dInput;
-        var output = (this.kp * error + this.ITerm - this.kd * dInput) * this.setDirection;
-        var rawOutput = output;
+        var proportional = this.kp * error;
+        var integral = this.integral + (this.ki * error);
+        var derivative = this.kd * (error - this.previousError);
 
-        if (output > this.outMax) {
-            output = this.outMax;
+        var output = (proportional + integral + derivative) * this.setDirection;
+
+        this.setIntegral(integral);
+        this.setOutput(output);
+
+        if (this.enableLogging) {
+            log("pid E " + error + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
         }
-        else if (output < this.outMin) {
-            output = this.outMin;
-        }
-        this.myOutput = output;
 
-        log("pid E " + error + "; P " + pPart + "; I " + iPart + "; D " + dPart + "; RO " + rawOutput + "; O " + output);
-
-        // Remember some variables for next time
-        this.lastInput = input;
+        this.previousError = error;
         this.lastTime = now;
         return true;
-    }
-    else {
+    } else {
         return false;
     }
 };
 
-/**
- * SetTunings(...)
- * This function allows the controller's dynamic performance to be adjusted. 
- * it's called automatically from the constructor, but tunings can also
- * be adjusted on the fly during normal operation
- */
 PID.prototype.setTunings = function(Kp, Ki, Kd) {
     if (Kp < 0 || Ki < 0 || Kd < 0) {
         return;
@@ -111,10 +82,6 @@ PID.prototype.setTunings = function(Kp, Ki, Kd) {
     this.kd = Kd / this.SampleTimeInSec;
 };
 
-/**
- * SetSampleTime(...)
- * sets the period, in Milliseconds, at which the calculation is performed	
- */
 PID.prototype.setSampleTime = function(NewSampleTime) {
     if (NewSampleTime > 0) {
         var ratio = NewSampleTime / (1.0 * this.SampleTime);
@@ -124,28 +91,38 @@ PID.prototype.setSampleTime = function(NewSampleTime) {
     }
 };
 
-/**
- * SetOutput( )
- * Set output level if in manual mode
- */
 PID.prototype.setOutput = function(val) {
     if (val > this.outMax) {
-        this.myOutput = val;
-    }
-    else if (val < this.outMin) {
+        val = this.outMax;
+    } else if (val < this.outMin) {
         val = this.outMin;
     }
     this.myOutput = val;
 };
 
-/**
- * SetOutputLimits(...)
- * This function will be used far more often than SetInputLimits.  while
- * the input to the controller will generally be in the 0-1023 range (which is
- * the default already,)  the output will be a little different.  maybe they'll
- * be doing a time window and will need 0-8000 or something.  or maybe they'll
- * want to clamp it from 0-125.  who knows.  at any rate, that can all be done here.
- */
+PID.prototype.setIntegral = function(val) {
+    var normalizedMin
+    var normalizedMax
+    if (this.setDirection > 0) {
+        normalizedMin = this.outMin;
+        normalizedMax = this.outMax;
+    } else {
+        normalizedMin = this.outMax * -1.0;
+        normalizedMax = this.outMin * -1.0;
+    }
+
+    if (val > normalizedMax) {
+        val = normalizedMax;
+    } else if (val < normalizedMin) {
+        val = normalizedMin;
+    }
+    this.integral = val;
+};
+
+PID.prototype.setLogging = function(val) {
+    this.enableLogging = val;
+}
+
 PID.prototype.setOutputLimits = function(Min, Max) {
     if (Min >= Max) {
         return;
@@ -160,30 +137,17 @@ PID.prototype.setOutputLimits = function(Min, Max) {
             this.myOutput = this.outMin;
         }
 
-        if (this.ITerm > this.outMax) {
-            this.ITerm = this.outMax;
-        }
-        else if (this.ITerm < this.outMin) {
-            this.ITerm = this.outMin;
-        }
+        this.setIntegral(this.integral);
     }
 };
 
-/**
- * SetMode(...)
- * Allows the controller Mode to be set to manual (0) or Automatic (non-zero)
- * when the transition from manual to auto occurs, the controller is
- * automatically initialized
- */
 PID.prototype.setMode = function(Mode) {
     var newAuto;
-    if (Mode == PID.AUTOMATIC || Mode.toString().toLowerCase() == 'automatic' || Mode.toString().toLowerCase() == 'auto') {
+    if (Mode.toString().toLowerCase() == 'automatic' || Mode.toString().toLowerCase() == 'auto') {
         newAuto = 1;
-    }
-    else if (Mode == PID.MANUAL || Mode.toString().toLowerCase() == 'manual') {
+    } else if (Mode.toString().toLowerCase() == 'manual') {
         newAuto = 0;
-    }
-    else {
+    } else {
         throw new Error("Incorrect Mode Chosen");
     }
 
@@ -193,34 +157,16 @@ PID.prototype.setMode = function(Mode) {
     this.inAuto = newAuto;
 };
 
-/**
- * Initialize()
- * does all the things that need to happen to ensure a bumpless transfer
- * from manual to automatic mode.
- */
 PID.prototype.initialize = function() {
-    this.ITerm = this.myOutput;
-    this.lastInput = this.input;
-    if (this.ITerm > this.outMax) {
-        this.ITerm = this.outMax;
-    }
-    else if (this.ITerm < this.outMin) {
-        this.ITerm = this.outMin;
-    }
+    this.setIntegral(this.myOutput * this.setDirection);
+    this.previousError = 0;
 };
 
-/**
- * SetControllerDirection(...)
- * The PID will either be connected to a DIRECT acting process (+Output leads 
- * to +Input) or a REVERSE acting process(+Output leads to -Input.)  we need to
- * know which one, because otherwise we may increase the output when we should
- * be decreasing.  This is called from the constructor.
- */
 PID.prototype.setControllerDirection = function(ControllerDirection) {
-    if (ControllerDirection == 0 || ControllerDirection.toString().toLowerCase() == 'direct') {
+    if (ControllerDirection.toString().toLowerCase() == 'direct') {
         this.setDirection = 1;
     }
-    else if (ControllerDirection == 1 || ControllerDirection.toString().toLowerCase() == 'reverse') {
+    else if (ControllerDirection.toString().toLowerCase() == 'reverse') {
         this.setDirection = -1;
     }
     else {
@@ -228,12 +174,13 @@ PID.prototype.setControllerDirection = function(ControllerDirection) {
     }
 };
 
-/**
- * Status Functions
- * Just because you set the Kp=-1 doesn't mean it actually happened.  these
- * functions query the internal state of the PID.  they're here for display 
- * purposes.  this are the functions the PID Front-end uses for example
- */
+PID.prototype.getNormalizedOutput = function(normalizedMin, normalizedMax) {
+    var output = this.getOutput();
+    var outLength = this.outMax - this.outMin;
+    var normalizedOutput = (normalizedMax - normalizedMin) * output / outLength  + normalizedMin;
+    return normalizedOutput;
+}
+
 PID.prototype.getKp = function() {
     return this.dispKp;
 };
@@ -266,11 +213,15 @@ PID.prototype.getSetPoint = function() {
     return this.mySetpoint;
 };
 
+PID.prototype.getIntegral = function() {
+    return this.integral;
+};
+
 module.exports = PID;
 
 function makePIDController(
   deviceName,
-  valueTopicName,
+  getValueClosure,
   outputTopicName,
   direction,
   timeframe
@@ -282,49 +233,63 @@ function makePIDController(
         enabled: {
             title: "Enabled",
             type: "switch",
-            value: false
+            value: false,
+            order: 1
         },
         set_point: {
             title: "Target value",
             type: "range",
             value: 35,
             max: 60,
-            min: 15
+            min: 15,
+            order: 2
         },
         cp: {
             title: "Proportional coef",
             type: "range",
             value: 1,
             max: 100,
-            min: 1
+            min: 0,
+            order: 3
         },
         ci: {
             title: "Integral coef / 10",
             type: "range",
             value: 1,
-            max: 20,
-            min: 0
+            max: 100,
+            min: 0,
+            order: 4
         },
         cd: {
             title: "Derivative coef",
             type: "range",
             value: 1,
             max: 100,
-            min: 0
+            min: 0,
+            order: 5
         },
         min_output: {
             title: "min output",
             type: "range",
             value: 0,
             max: 10000,
-            min: 0
+            min: 0,
+            order: 6
         },
         max_output: {
             title: "max output",
             type: "range",
             value: 10000,
             max: 10000,
-            min: 0
+            min: 0,
+            order: 7
+        },
+        integral: {
+            title: "integral",
+            type: "value",
+            value: 0,
+            read_only: true,
+            order: 8
         }
       }
     });
@@ -336,11 +301,20 @@ function makePIDController(
   var cdTopicName = deviceName + "/cd";
   var minOutputTopicName = deviceName + "/min_output";
   var maxOutputTopicName = deviceName + "/max_output";
+  var integralTopicName = deviceName + "/integral";
+  var length = dev[maxOutputTopicName] - dev[minOutputTopicName];
+  var normalizedPower = dev[outputTopicName] / length * 100;
   
-  
-  var ctr = new PID(dev[valueTopicName], dev[setPointTopicName], dev[cpTopicName], dev[ciTopicName], dev[cdTopicName], direction);
+  var ctr = new PID(
+    getValueClosure(),
+    dev[setPointTopicName],
+    dev[cpTopicName],
+    dev[ciTopicName],
+    dev[cdTopicName],
+    direction,
+    normalizedPower
+  );
   ctr.setSampleTime(timeframe);
-  ctr.setOutputLimits(-100, 100);
   ctr.setMode("manual");
   
   var myControl = function() {
@@ -350,7 +324,7 @@ function makePIDController(
     } else {
       ctr.setMode("manual");
     }
-	var temperature = dev[valueTopicName]; 
+	var temperature = getValueClosure(); 
   	var temperatureSetpoint =  dev[setPointTopicName]; 
     var Kp = dev[cpTopicName];
     var Ki = dev[ciTopicName] / 10;
@@ -361,16 +335,22 @@ function makePIDController(
   	ctr.setInput(temperature);
   	ctr.setPoint(temperatureSetpoint);
   	ctr.setTunings(Kp, Ki, Kd);
-  	ctr.compute();
-  	var output = ctr.getOutput();
-    var normalizedOutput = (output + 100) / 2;
-    var normalizedPower = (maxOutput - minOutput) / 100 * normalizedOutput;
-  	log("PID " + deviceName + " O -> " + String(output) + "; NO -> " + String(normalizedOutput) + "; NP ->" + String(normalizedPower));
-    dev[outputTopicName] = normalizedPower;
+  	if (ctr.compute()) {
+        dev[outputTopicName] = ctr.getNormalizedOutput(minOutput, maxOutput);
+        dev[integralTopicName] = ctr.getIntegral();
+    }
   };
   myControl();
   setInterval(myControl, timeframe);
 }
 
 //makePIDController("asic-esbe-actuator", "wb-m1w2_33/External Sensor 1", "wb-mao4_213/Channel 1", "direct", 2000);
-makePIDController("dry-cooling", "wb-m1w2_225/External Sensor 2", "wb-mao4_213/Channel 2", "reverse", 2000);
+makePIDController(
+    "dry-cooling",
+    function() {
+        return dev["wb-m1w2_225/External Sensor 2"];
+    },
+    "wb-mao4_213/Channel 2",
+    "reverse",
+    1000
+);
