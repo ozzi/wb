@@ -44,28 +44,28 @@ PID.prototype.compute = function() {
     var now = this.millis();
     var timeChange = (now - this.lastTime);
     if (timeChange >= this.SampleTime) {
-        var input = this.input;
-        var error = this.mySetpoint - input;
-        var proportional = this.kp * error;
-        var integral = this.integral + (this.ki * error);
-        var derivative = this.kd * (error - this.previousError);
-
-        var output = (proportional + integral + derivative) * this.setDirection;
-
-        this.setIntegral(integral);
+        var error = this.mySetpoint - this.input;
+        var output = this.update(error);
         this.setOutput(output);
-
-        if (this.enableLogging) {
-            log("pid E " + error + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
-        }
-
-        this.previousError = error;
         this.lastTime = now;
         return true;
     } else {
         return false;
     }
 };
+
+PID.prototype.update = function(error) {
+    var proportional = this.kp * error;
+    var integral = this.integral + this.ki * (error + this.previousError) / 2;
+    var derivative = this.kd * (error - this.previousError);
+    var output = (proportional + integral + derivative) * this.setDirection;
+    this.setIntegral(integral);
+    this.previousError = error;
+    if (this.enableLogging) {
+      log("pid E " + error + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
+    }
+    return output;
+}
 
 PID.prototype.setTunings = function(Kp, Ki, Kd) {
     if (Kp < 0 || Ki < 0 || Kd < 0) {
@@ -101,20 +101,10 @@ PID.prototype.setOutput = function(val) {
 };
 
 PID.prototype.setIntegral = function(val) {
-    var normalizedMin
-    var normalizedMax
-    if (this.setDirection > 0) {
-        normalizedMin = this.outMin;
-        normalizedMax = this.outMax;
-    } else {
-        normalizedMin = this.outMax * -1.0;
-        normalizedMax = this.outMin * -1.0;
-    }
-
-    if (val > normalizedMax) {
-        val = normalizedMax;
-    } else if (val < normalizedMin) {
-        val = normalizedMin;
+    if (val > this.outMax) {
+        val = this.outMax;
+    } else if (val < -this.outMax) {
+        val = -this.outMax;
     }
     this.integral = val;
 };
