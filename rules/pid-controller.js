@@ -1,14 +1,3 @@
-/**
- * https://github.com/wilberforce/pid-controller/tree/master
- * pid-controller -  A node advanced PID controller based on the Arduino PID library
- * github@wilberforce.co.nz Rhys Williams
- * Based on:
- * Arduino PID Library - Version 1.0.1
- * by Brett Beauregard <br3ttb@gmail.com> brettbeauregard.com
- * 
- * This Library is licensed under a GPL-3.0 License
- */
-
 //"use strict";
 var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutput) {
     this.input = Input;
@@ -45,7 +34,8 @@ PID.prototype.compute = function() {
     var timeChange = (now - this.lastTime);
     if (timeChange >= this.SampleTime) {
         var error = (this.mySetpoint - this.input) * this.setDirection;
-        var output = this.update(error);
+        var timeChangeInSec = timeChange / 1000;
+        var output = this.update(error, timeChangeInSec);
         this.setOutput(output);
         this.lastTime = now;
         return true;
@@ -54,10 +44,10 @@ PID.prototype.compute = function() {
     }
 };
 
-PID.prototype.update = function(error) {
+PID.prototype.update = function(error, time) {
     var proportional = this.kp * error;
-    var integral = this.integral + this.ki * (error + this.previousError) / 2;
-    var derivative = this.kd * (error - this.previousError);
+    var integral = this.integral + this.ki * time * (error + this.previousError) / 2;
+    var derivative = this.kd / time * (error - this.previousError);
     var output = proportional + integral + derivative;
     this.setIntegral(integral);
     this.previousError = error;
@@ -72,22 +62,15 @@ PID.prototype.setTunings = function(Kp, Ki, Kd) {
         return;
     }
 
-    this.dispKp = Kp;
-    this.dispKi = Ki;
-    this.dispKd = Kd;
-
-    this.SampleTimeInSec = (this.SampleTime) / 1000;
     this.kp = Kp;
-    this.ki = Ki * this.SampleTimeInSec;
-    this.kd = Kd / this.SampleTimeInSec;
+    this.ki = Ki;
+    this.kd = Kd;
 };
 
 PID.prototype.setSampleTime = function(NewSampleTime) {
     if (NewSampleTime > 0) {
-        var ratio = NewSampleTime / (1.0 * this.SampleTime);
-        this.ki *= ratio;
-        this.kd /= ratio;
-        this.SampleTime = Math.round(NewSampleTime);
+        this.SampleTime = NewSampleTime;
+        this.lastTime = this.millis() - this.SampleTime;
     }
 };
 
@@ -150,6 +133,7 @@ PID.prototype.setMode = function(Mode) {
 PID.prototype.initialize = function() {
     this.setIntegral(this.myOutput);
     this.previousError = 0;
+    this.lastTime = this.millis() - this.SampleTime;
 };
 
 PID.prototype.setControllerDirection = function(ControllerDirection) {
@@ -172,15 +156,15 @@ PID.prototype.getNormalizedOutput = function(normalizedMin, normalizedMax) {
 }
 
 PID.prototype.getKp = function() {
-    return this.dispKp;
+    return this.kp;
 };
 
 PID.prototype.getKd = function() {
-    return this.dispKd;
+    return this.kd;
 };
 
 PID.prototype.getKi = function() {
-    return this.dispKi;
+    return this.ki;
 };
 
 PID.prototype.getMode = function() {
@@ -299,7 +283,7 @@ function makePIDController(
     getValueClosure(),
     dev[setPointTopicName],
     dev[cpTopicName],
-    dev[ciTopicName],
+    dev[ciTopicName] / 10,
     dev[cdTopicName],
     direction,
     normalizedPower
