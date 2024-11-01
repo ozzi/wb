@@ -19,7 +19,7 @@ var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutp
     this.setTunings(Kp, Ki, Kd);
     this.setControllerDirection(ControllerDirection);
     this.lastTime = this.millis() - this.SampleTime;
-    this.setIntegral(InitialOutput * this.setDirection);
+    this.setIntegral(InitialOutput);
     this.setOutput(InitialOutput);
     this.enableLogging = true;
 };
@@ -44,7 +44,7 @@ PID.prototype.compute = function() {
     var now = this.millis();
     var timeChange = (now - this.lastTime);
     if (timeChange >= this.SampleTime) {
-        var error = this.mySetpoint - this.input;
+        var error = (this.mySetpoint - this.input) * this.setDirection;
         var output = this.update(error);
         this.setOutput(output);
         this.lastTime = now;
@@ -58,7 +58,7 @@ PID.prototype.update = function(error) {
     var proportional = this.kp * error;
     var integral = this.integral + this.ki * (error + this.previousError) / 2;
     var derivative = this.kd * (error - this.previousError);
-    var output = (proportional + integral + derivative) * this.setDirection;
+    var output = proportional + integral + derivative;
     this.setIntegral(integral);
     this.previousError = error;
     if (this.enableLogging) {
@@ -103,8 +103,8 @@ PID.prototype.setOutput = function(val) {
 PID.prototype.setIntegral = function(val) {
     if (val > this.outMax) {
         val = this.outMax;
-    } else if (val < -this.outMax) {
-        val = -this.outMax;
+    } else if (val < this.outMin) {
+        val = this.outMin;
     }
     this.integral = val;
 };
@@ -148,7 +148,7 @@ PID.prototype.setMode = function(Mode) {
 };
 
 PID.prototype.initialize = function() {
-    this.setIntegral(this.myOutput * this.setDirection);
+    this.setIntegral(this.myOutput);
     this.previousError = 0;
 };
 
