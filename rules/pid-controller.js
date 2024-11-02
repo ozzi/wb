@@ -1,5 +1,5 @@
 //"use strict";
-var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutput) {
+var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutput, EnableLog) {
     this.input = Input;
     this.mySetpoint = Setpoint;
     this.inAuto = false;
@@ -10,7 +10,7 @@ var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutp
     this.lastTime = this.millis() - this.SampleTime;
     this.setIntegral(InitialOutput);
     this.setOutput(InitialOutput);
-    this.enableLogging = true;
+    this.enableLogging = EnableLog;
 };
 
 PID.prototype.setInput = function(current_value) {
@@ -32,7 +32,7 @@ PID.prototype.compute = function() {
     }
     var now = this.millis();
     var timeChange = (now - this.lastTime);
-    if (timeChange >= this.SampleTime) {
+    if (timeChange > 0) {
         var error = (this.mySetpoint - this.input) * this.setDirection;
         var timeChangeInSec = timeChange / 1000;
         var output = this.update(error, timeChangeInSec);
@@ -52,7 +52,7 @@ PID.prototype.update = function(error, time) {
     this.setIntegral(integral);
     this.previousError = error;
     if (this.enableLogging) {
-      log("pid E " + error + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
+      log("pid E " + error + "; T" + time + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
     }
     return output;
 }
@@ -198,11 +198,12 @@ function makePIDController(
   getValueClosure,
   outputTopicName,
   direction,
-  timeframe
+  timeframe,
+  enableLog
 ) {
   var deviceName = "pid-controller-" + deviceName;
     defineVirtualDevice(deviceName, {
-      title: "Dry Cooling PID Controller",
+      title: "PID Controller: " + deviceName,
       cells: {
         enabled: {
             title: "Enabled",
@@ -214,12 +215,12 @@ function makePIDController(
             title: "Target value",
             type: "range",
             value: 35,
-            max: 60,
-            min: 15,
+            max: 100,
+            min: 0,
             order: 2
         },
         cp: {
-            title: "Proportional coef",
+            title: "Proportional gain",
             type: "range",
             value: 1,
             max: 100,
@@ -227,7 +228,7 @@ function makePIDController(
             order: 3
         },
         ci: {
-            title: "Integral coef / 10",
+            title: "Integral gain / 10",
             type: "range",
             value: 1,
             max: 100,
@@ -235,7 +236,7 @@ function makePIDController(
             order: 4
         },
         cd: {
-            title: "Derivative coef",
+            title: "Derivative gain",
             type: "range",
             value: 1,
             max: 100,
@@ -286,7 +287,8 @@ function makePIDController(
     dev[ciTopicName] / 10,
     dev[cdTopicName],
     direction,
-    normalizedPower
+    normalizedPower,
+    enableLog
   );
   ctr.setSampleTime(timeframe);
   ctr.setMode("manual");
@@ -318,7 +320,40 @@ function makePIDController(
   setInterval(myControl, timeframe);
 }
 
-//makePIDController("asic-esbe-actuator", "wb-m1w2_33/External Sensor 1", "wb-mao4_213/Channel 1", "direct", 2000);
+makePIDController(
+    "asic-pump",
+    function() {
+        var dryCoolingInput = dev["wb-m1w2_33/External Sensor 1"];
+        var dryCoolingOutput = dev["wb-m1w2_33/External Sensor 2"];
+        var value = dryCoolingOutput - dryCoolingInput;
+        if (value < 0) {
+          value = 0;
+        }
+        return value;
+    },
+    "pump-pwm-controller-asic/power",
+    "reverse",
+    900,
+    false
+);
+
+makePIDController(
+    "dry-cooling-pump",
+    function() {
+        var dryCoolingInput = dev["wb-m1w2_225/External Sensor 1"];
+        var dryCoolingOutput = dev["wb-m1w2_225/External Sensor 2"];
+        var value = dryCoolingOutput - dryCoolingInput;
+        if (value < 0) {
+          value = 0;
+        }
+        return value;
+    },
+    "pump-pwm-controller-dry-cooling-tower/power",
+    "reverse",
+    900,
+    false
+);
+
 makePIDController(
     "dry-cooling",
     function() {
@@ -326,5 +361,17 @@ makePIDController(
     },
     "wb-mao4_213/Channel 2",
     "reverse",
-    1000
+    900,
+    true
+);
+
+makePIDController(
+  "asic-esbe-actuator",
+  function() {
+        return dev["wb-m1w2_33/External Sensor 1"];
+  },
+  "wb-mao4_213/Channel 1",
+  "direct",
+  900,
+  true
 );
