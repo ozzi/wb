@@ -197,6 +197,8 @@ function makePIDController(
   deviceName,
   getValueClosure,
   outputTopicName,
+  minOutput,
+  maxOutput,
   direction,
   timeframe,
   enableLog
@@ -243,28 +245,19 @@ function makePIDController(
             min: 0,
             order: 5
         },
-        min_output: {
-            title: "min output",
-            type: "range",
+        power: {
+            title: "power",
+            type: "value",
             value: 0,
-            max: 10000,
-            min: 0,
+            read_only: true,
             order: 6
-        },
-        max_output: {
-            title: "max output",
-            type: "range",
-            value: 10000,
-            max: 10000,
-            min: 0,
-            order: 7
         },
         integral: {
             title: "integral",
             type: "value",
             value: 0,
             read_only: true,
-            order: 8
+            order: 7
         }
       }
     });
@@ -274,10 +267,9 @@ function makePIDController(
   var cpTopicName = deviceName + "/cp";
   var ciTopicName = deviceName + "/ci";
   var cdTopicName = deviceName + "/cd";
-  var minOutputTopicName = deviceName + "/min_output";
-  var maxOutputTopicName = deviceName + "/max_output";
   var integralTopicName = deviceName + "/integral";
-  var length = dev[maxOutputTopicName] - dev[minOutputTopicName];
+  var powerTopicName = deviceName + "/power";
+  var length = maxOutput - minOutput;
   var normalizedPower = dev[outputTopicName] / length * 100;
   
   var ctr = new PID(
@@ -305,13 +297,11 @@ function makePIDController(
     var Kp = dev[cpTopicName];
     var Ki = dev[ciTopicName] / 10;
     var Kd = dev[cdTopicName];
-    var minOutput = dev[minOutputTopicName];
-    var maxOutput = dev[maxOutputTopicName];
-    
   	ctr.setInput(temperature);
   	ctr.setPoint(temperatureSetpoint);
   	ctr.setTunings(Kp, Ki, Kd);
   	if (ctr.compute()) {
+        dev[powerTopicName] = ctr.getOutput();
         dev[outputTopicName] = ctr.getNormalizedOutput(minOutput, maxOutput);
         dev[integralTopicName] = ctr.getIntegral();
     }
@@ -332,6 +322,8 @@ makePIDController(
         return value;
     },
     "pump-pwm-controller-asic/power",
+    0,
+    1000,
     "reverse",
     900,
     false
@@ -349,6 +341,8 @@ makePIDController(
         return value;
     },
     "pump-pwm-controller-dry-cooling-tower/power",
+    0,
+    1000,
     "reverse",
     900,
     false
@@ -360,17 +354,47 @@ makePIDController(
         return dev["wb-m1w2_225/External Sensor 2"];
     },
     "wb-mao4_213/Channel 2",
+    0,
+    10000,
     "reverse",
     900,
-    true
+    false
 );
 
 makePIDController(
-  "asic-esbe-actuator",
+  "esbe-actuator-asic",
   function() {
         return dev["wb-m1w2_33/External Sensor 1"];
   },
   "wb-mao4_213/Channel 1",
+  0,
+  10000,
+  "direct",
+  900,
+  true
+);
+
+makePIDController(
+  "esbe-actuator-floor-1",
+  function() {
+        return dev["wb-ms_176/External Sensor 2"];
+  },
+  "wb_mao4_20ma_16/channel_2_level",
+  0,
+  100,
+  "direct",
+  900,
+  true
+);
+
+makePIDController(
+  "esbe-actuator-floor-2",
+  function() {
+        return dev["wb-w1/28-3c01e0764bc1"];
+  },
+  "wb_mao4_20ma_16/channel_1_level",
+  0,
+  100,
   "direct",
   900,
   true
