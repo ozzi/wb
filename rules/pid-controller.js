@@ -1,5 +1,5 @@
 //"use strict";
-var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutput, EnableLog) {
+var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutput) {
     this.input = Input;
     this.mySetpoint = Setpoint;
     this.inAuto = false;
@@ -10,7 +10,7 @@ var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutp
     this.lastTime = this.millis() - this.SampleTime;
     this.setIntegral(InitialOutput);
     this.setOutput(InitialOutput);
-    this.enableLogging = EnableLog;
+    this.enableLogging = false;
 };
 
 PID.prototype.setInput = function(current_value) {
@@ -20,6 +20,10 @@ PID.prototype.setInput = function(current_value) {
 PID.prototype.setPoint = function(current_value) {
     this.mySetpoint = current_value;
 };
+
+PID.prototype.setLogging = function(new_value) {
+  self.enableLogging = new_value;
+}
 
 PID.prototype.millis = function() {
     var d = new Date();
@@ -52,7 +56,7 @@ PID.prototype.update = function(error, time) {
     this.setIntegral(integral);
     this.previousError = error;
     if (this.enableLogging) {
-      log("pid E " + error + "; T" + time + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
+      log("pid E " + error + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
     }
     return output;
 }
@@ -245,19 +249,25 @@ function makePIDController(
             min: 0,
             order: 5
         },
+        logging: {
+            title: "logging",
+            type: "switch",
+            value: false,
+            order: 10
+        },
         power: {
             title: "power",
             type: "value",
             value: 0,
             read_only: true,
-            order: 6
+            order: 20
         },
         integral: {
             title: "integral",
             type: "value",
             value: 0,
             read_only: true,
-            order: 7
+            order: 21
         }
       }
     });
@@ -269,6 +279,7 @@ function makePIDController(
   var cdTopicName = deviceName + "/cd";
   var integralTopicName = deviceName + "/integral";
   var powerTopicName = deviceName + "/power";
+  var loggingTopicName = deviceName + "/logging";
   var length = maxOutput - minOutput;
   var normalizedPower = dev[outputTopicName] / length * 100;
   
@@ -279,8 +290,7 @@ function makePIDController(
     dev[ciTopicName] / 10,
     dev[cdTopicName],
     direction,
-    normalizedPower,
-    enableLog
+    normalizedPower
   );
   ctr.setSampleTime(timeframe);
   ctr.setMode("manual");
@@ -297,6 +307,8 @@ function makePIDController(
     var Kp = dev[cpTopicName];
     var Ki = dev[ciTopicName] / 10;
     var Kd = dev[cdTopicName];
+    var enableLogging = dev[loggingTopicName];
+    ctr.setLogging(enableLogging);
   	ctr.setInput(temperature);
   	ctr.setPoint(temperatureSetpoint);
   	ctr.setTunings(Kp, Ki, Kd);
@@ -325,8 +337,7 @@ makePIDController(
     0,
     1000,
     "reverse",
-    900,
-    false
+    900
 );
 
 makePIDController(
@@ -344,8 +355,7 @@ makePIDController(
     0,
     1000,
     "reverse",
-    900,
-    false
+    900
 );
 
 makePIDController(
@@ -357,8 +367,7 @@ makePIDController(
     0,
     10000,
     "reverse",
-    900,
-    false
+    900
 );
 
 makePIDController(
@@ -370,8 +379,7 @@ makePIDController(
   0,
   10000,
   "direct",
-  900,
-  true
+  900
 );
 
 makePIDController(
@@ -383,8 +391,7 @@ makePIDController(
   0,
   100,
   "direct",
-  900,
-  true
+  900
 );
 
 makePIDController(
@@ -396,6 +403,17 @@ makePIDController(
   0,
   100,
   "direct",
-  900,
-  true
+  900
+);
+
+makePIDController(
+  "air-asic",
+  function() {
+        return dev["wb-m1w2_69/External Sensor 2"];
+  },
+  "wb-mao4_213/Channel 3",
+  0,
+  10000,
+  "reverse",
+  900
 );
