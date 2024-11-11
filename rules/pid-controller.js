@@ -11,6 +11,8 @@ var PID = function(Input, Setpoint, Kp, Ki, Kd, ControllerDirection, InitialOutp
     this.setIntegral(InitialOutput);
     this.setOutput(InitialOutput);
     this.enableLogging = false;
+    this.alphaDynamicKp = 0;
+    this.maxDynamicKp = Kp;
 };
 
 PID.prototype.setInput = function(current_value) {
@@ -22,7 +24,15 @@ PID.prototype.setPoint = function(current_value) {
 };
 
 PID.prototype.setLogging = function(new_value) {
-  self.enableLogging = new_value;
+    this.enableLogging = new_value;
+}
+
+PID.prototype.setAlphaDynamicKp = function(new_value) {
+    this.alphaDynamicKp = new_value;
+}
+
+PID.prototype.setMaxDynamicKp = function(new_value) {
+    this.maxDynamicKp = new_value;
 }
 
 PID.prototype.millis = function() {
@@ -48,15 +58,20 @@ PID.prototype.compute = function() {
     }
 };
 
+PID.prototype.getDynamicKp = function(error) {
+  return this.kp + (this.maxDynamicKp - this.kp) * (1 - Math.exp(-this.alphaDynamicKp * Math.abs(error)));
+}
+
 PID.prototype.update = function(error, time) {
-    var proportional = this.kp * error;
+    var currentKp = this.getDynamicKp(error);
+    var proportional = currentKp * error;
     var integral = this.integral + this.ki * time * (error + this.previousError) / 2;
     var derivative = this.kd / time * (error - this.previousError);
     var output = proportional + integral + derivative;
     this.setIntegral(integral);
     this.previousError = error;
     if (this.enableLogging) {
-      log("pid E " + error + "; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
+      log("pid E " + error + "; dP " + currentKp + " ; P " + proportional + "; I " + this.integral + "; D " + derivative + "; O " + output);
     }
     return output;
 }
@@ -249,6 +264,22 @@ function makePIDController(
             min: 0,
             order: 5
         },
+        alpha_proportional: {
+            title: "Alpha for dynamic proportional / 10",
+            type: "range",
+            value: 0,
+            max: 100,
+            min: 0,
+            order: 6
+        },
+        max_proportional: {
+            title: "Max dynamic proportional",
+            type: "range",
+            value: 0,
+            max: 200,
+            min: 0,
+            order: 7
+        },
         logging: {
             title: "logging",
             type: "switch",
@@ -280,6 +311,8 @@ function makePIDController(
   var integralTopicName = deviceName + "/integral";
   var powerTopicName = deviceName + "/power";
   var loggingTopicName = deviceName + "/logging";
+  var alphaDynamicKpTopicName = deviceName + "/alpha_proportional";
+  var maxDynamicKpTopicName = deviceName + "/max_proportional";
   var length = maxOutput - minOutput;
   var normalizedPower = dev[outputTopicName] / length * 100;
   
@@ -308,10 +341,14 @@ function makePIDController(
     var Ki = dev[ciTopicName] / 10;
     var Kd = dev[cdTopicName];
     var enableLogging = dev[loggingTopicName];
+    var alphaDynamicKp = dev[alphaDynamicKpTopicName] / 10;
+    var maxDynamicKp = dev[maxDynamicKpTopicName];
     ctr.setLogging(enableLogging);
   	ctr.setInput(temperature);
   	ctr.setPoint(temperatureSetpoint);
   	ctr.setTunings(Kp, Ki, Kd);
+    ctr.setAlphaDynamicKp(alphaDynamicKp);
+    ctr.setMaxDynamicKp(maxDynamicKp);
   	if (ctr.compute()) {
         dev[powerTopicName] = ctr.getOutput();
         dev[outputTopicName] = ctr.getNormalizedOutput(minOutput, maxOutput);
