@@ -58,12 +58,14 @@ function makeASICCoolingController(
                 poolCoolingRunCallback(false);
                 var outdoorTemperature = dev[outdoorTemperatureTopicName];
                 var switchTemperature = dev[switchTemperatureTopicName];
-                if (outdoorTemperature < switchTemperature) {
-                    wellCoolingRunCallback(false);
-                    dryCoolingRunCallback(true);
-                } else {
+                var targetTemperature = dev[targetTemperatureTopicName];
+                var delta = targetTemperature - outdoorTemperature;
+                if (delta < switchTemperature) {
                     dryCoolingRunCallback(false);
                     wellCoolingRunCallback(true);
+                } else {
+                    wellCoolingRunCallback(false);
+                    dryCoolingRunCallback(true);
                 }
             } else if (newValue == 2) {
                 wellCoolingRunCallback(false);
@@ -84,7 +86,8 @@ function makeASICCoolingController(
     defineRule("asic-cooling-controller-switch-" + name, {
         whenChanged: [
             switchTemperatureTopicName,
-            outdoorTemperatureTopicName
+            outdoorTemperatureTopicName,
+            targetTemperatureTopicName
         ],
         then: function () {
             if (dev[modeTopicName] != 1) {
@@ -93,12 +96,14 @@ function makeASICCoolingController(
             var hysteresis = 0.25;
             var outdoorTemperature = dev[outdoorTemperatureTopicName];
             var switchTemperature = dev[switchTemperatureTopicName];
-            if (outdoorTemperature < (switchTemperature - hysteresis)) {
-                wellCoolingRunCallback(false);
-                dryCoolingRunCallback(true);
-            } else if (outdoorTemperature > (switchTemperature + hysteresis)) {
+            var targetTemperature = dev[targetTemperatureTopicName];
+            var delta = targetTemperature - outdoorTemperature;
+            if (delta < (switchTemperature - hysteresis)) {
                 dryCoolingRunCallback(false);
                 wellCoolingRunCallback(true);
+            } else if (delta > (switchTemperature + hysteresis)) {
+                wellCoolingRunCallback(false);
+                dryCoolingRunCallback(true);
             }
         }
     });
