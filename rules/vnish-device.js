@@ -22,16 +22,19 @@ function performGET(
     });
 }
 
-function getStatus(host, callback) {
+function getSummary(host, callback) {
   performGET(
     host,
-    "/api/v1/status",
+    "/api/v1/summary",
     function (serverResponse) {
       if (serverResponse == null) {
-        callback(null);
+        callback("unavailable", 0);
       } else {
         var response = JSON.parse(serverResponse);
-        callback(response["miner_state"]);
+        var state = response["miner"]["miner_status"]["miner_state"];
+        var powerStr = response["miner"]["power_consumption"];
+        var power = parseInt(powerStr);
+        callback(state, power);
       }
     }
   );
@@ -43,10 +46,12 @@ function getPerfSummary(host, callback) {
     "/api/v1/perf-summary",
     function (serverResponse) {
       if (serverResponse == null) {
-        callback(null);
+        callback(0);
       } else {
         var response = JSON.parse(serverResponse);
-        callback(response["current_preset"]["name"]);
+        var presetStr = response["current_preset"]["name"];
+        var preset = parseInt(presetStr);
+        callback(preset);
       }
     }
   );
@@ -79,6 +84,13 @@ function buildVNISHDevice(
         value: 0,
         readonly: true,
         order: 3
+      },
+      power: {
+        title: "current power",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 4
       }
     }
   });
@@ -86,6 +98,7 @@ function buildVNISHDevice(
   var enabledTopicName = deviceName + "/enabled";
   var stateTopicName = deviceName + "/state";
   var currentPresetTopicName = deviceName + "/current_preset";
+  var powerTopicName = deviceName + "/power";
 
   var intervalId = null;
 
@@ -100,28 +113,21 @@ function buildVNISHDevice(
       if (newValue) {
         intervalId = setInterval(
           function () {
-            getStatus(
+            getSummary(
               hostName,
-              function(state) {
-                var currentState = dev[stateTopicName];
-                var newState = "unavailable";
-                if (state != null) {
-                  newState = state;
-                }
-                if (currentState != newState) {
+              function(newState, newPower) {
+                if (newState != dev[stateTopicName]) {
                   dev[stateTopicName] = newState;
+                }
+                if (newPower != dev[powerTopicName]) {
+                  dev[powerTopicName] = newPower;
                 }
               }
             );
             getPerfSummary(
               hostName,
-              function(preset) {
-                var currentPreset = dev[currentPresetTopicName];
-                var newPreset = 0;
-                if (preset != null) {
-                  newPreset = parseInt(preset);
-                }
-                if (currentPreset != newPreset) {
+              function(newPreset) {
+                if (newPreset != dev[currentPresetTopicName]) {
                   dev[currentPresetTopicName] = newPreset;
                 }
               }
