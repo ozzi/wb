@@ -101,9 +101,13 @@ makePoolHeatController(
     function () {
         dev["ASIC-cooling-controller-T21/mode"] = 4;
         dev["calculated-flow-sensor-POOL FILTR/activated"] = true;
+        dev["ANTMINER T21-1/schedule_mode"] = "pool-heat";
+        dev["ANTMINER T21-2/schedule_mode"] = "pool-heat";
     },
     function () {
         dev["ASIC-cooling-controller-T21/mode"] = 1;
         dev["calculated-flow-sensor-POOL FILTR/activated"] = false;
+        dev["ANTMINER T21-1/schedule_mode"] = "day-night";
+        dev["ANTMINER T21-2/schedule_mode"] = "day-night";
     }
 );
