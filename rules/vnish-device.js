@@ -48,6 +48,34 @@ function performPOST(
     });
 }
 
+function performPayloadPOST(
+  host,
+  endpoint,
+  apikey,
+  payload,
+  callback
+) {
+  var command = 'curl -X POST {}{} -H \'x-api-key: {}\' -H \'Content-Type: application/json\' -d \'{}\''.format(
+    host,
+    endpoint,
+    apikey,
+    payload
+  );
+
+  runShellCommand(
+    command,
+    {
+      captureOutput: false,
+      exitCallback: function (exitCode) {
+        if (exitCode === 0) {
+          callback(true);
+        } else {
+          callback(false);
+        }
+      }
+    });
+}
+
 function postMiningPause(host, apikey, callback) {
   performPOST(host, "/api/v1/mining/pause", apikey, callback);
 }
@@ -67,6 +95,12 @@ function postMiningStart(host, apikey, callback) {
 function postMiningRestart(host, apikey, callback) {
   performPOST(host, "/api/v1/mining/restart", apikey, callback);
 }
+
+function postUpdatePerformancePreset(host, apikey, preset, callback) {
+  var settings = "{\"miner\":{\"overclock\":{\"preset\":\"{}\"}}}".format(preset);
+  performPayloadPOST(host, "/api/v1/settings", apikey, settings, callback);
+}
+
 
 function getSummary(host, callback) {
   performGET(
@@ -169,6 +203,50 @@ function buildVNISHDevice(
         title: "restart mining",
         type: "pushbutton",
         order: 10
+      },
+      selected_preset: {
+        title: "selected preset",
+        type: "text",
+        value: "optimal",
+        readonly: false,
+        enum: {
+          "optimal": { en: "Optimal", ru: "Оптимальный" },
+          "lowpower": { en: "Low power", ru: "Низкое энергопотребление" },
+          "performance": { en: "Performance", ru: "Производительный" }
+        },
+        order: 11
+      },
+      performance_preset: {
+        title: "performance preset",
+        type: "value",
+        value: 0,
+        readonly: false,
+        order: 12
+      },
+      lowpower_preset: {
+        title: "low power preset",
+        type: "value",
+        value: 0,
+        readonly: false,
+        order: 13
+      },
+      optimal_preset: {
+        title: "optimal power preset",
+        type: "value",
+        value: 0,
+        readonly: false,
+        order: 14
+      },
+      schedule_mode: {
+        title: "schedule mode",
+        type: "text",
+        value: "disabled",
+        readonly: false,
+        enum: {
+          "disabled": { en: "Disabled", ru: "Отключено" },
+          "day-night": { en: "Day / Night", ru: "День / Ночь" }
+        },
+        order: 15
       }
     }
   });
@@ -184,6 +262,13 @@ function buildVNISHDevice(
   var pauseMiningTopicName = deviceName + "/pause_mining";
   var resumeMiningTopicName = deviceName + "/resume_mining";
   var restartMiningTopicName = deviceName + "/restart_mining";
+
+  var selectedPresetTopicName = deviceName + "/selected_preset";
+  var performancePresetTopicName = deviceName + "/performance_preset";
+  var lowpowerPresetTopicName = deviceName + "/lowpower_preset";
+  var optimalPresetTopicName = deviceName + "/optimal_preset";
+
+  var scheduleModeTopicName = deviceName + "/schedule_mode";
 
   var intervalId = null;
 
@@ -220,6 +305,68 @@ function buildVNISHDevice(
           },
           timeframe
         );
+      }
+    }
+  });
+
+  defineRule("vnish-presets-automation-" + deviceName, {
+    whenChanged: [
+      selectedPresetTopicName,
+      performancePresetTopicName,
+      lowpowerPresetTopicName,
+      optimalPresetTopicName
+    ],
+    then: function () {
+      var selectedPreset = dev[selectedPresetTopicName];
+      var performancePreset = dev[performancePresetTopicName];
+      var lowpowerPreset = dev[lowpowerPresetTopicName];
+      var optimalPreset = dev[optimalPresetTopicName];
+      var currentPreset = dev[currentPresetTopicName];
+      var preset = null;
+      if (selectedPreset == "optimal") {
+        preset = optimalPreset;
+      } else if (selectedPreset == "performance") {
+        preset = performancePreset;
+      } else if (selectedPreset == "lowpower") {
+        preset = lowpowerPreset;
+      }
+      if (preset == null) {
+        return;
+      }
+      
+      if (currentPreset != preset) {
+        postUpdatePerformancePreset(
+          hostName,
+          dev[apikeyTopicName],
+          preset,
+          function() {
+            var message = '{}: change preset to {}'.format(
+              deviceName,
+              preset
+            );
+            log(message);
+          }
+        );
+      }
+    }
+  });
+
+  defineRule("vnish-turn-performance-preset" + deviceName, {
+    when: cron("00 00 23 * *"),
+    then: function () {
+      var scheduleMode = dev[scheduleModeTopicName];
+      if (scheduleMode == "day-night") {
+        dev[selectedPresetTopicName] = "performance";
+      }
+    }
+  });
+
+  defineRule("vnish-turn-lowmode-preset" + deviceName, {
+    when: cron("00 00 07 * *"),
+    then: function () {
+      var scheduleMode = dev[scheduleModeTopicName];
+      if (scheduleMode == "day-night") {
+        dev[selectedPresetTopicName] = "lowpower";
       }
     }
   });
