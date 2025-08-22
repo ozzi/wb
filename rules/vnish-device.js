@@ -137,6 +137,14 @@ function getPerfSummary(host, callback) {
   );
 }
 
+function isNightRate() {
+    var currentTime = new Date();
+    var currentHour = currentTime.getHours();
+    
+    // Ночной тариф с 23:00 до 7:00
+    return currentHour >= 23 || currentHour < 7;
+}
+
 function buildVNISHDevice(
   deviceName,
   hostName,
@@ -244,7 +252,8 @@ function buildVNISHDevice(
         readonly: false,
         enum: {
           "disabled": { en: "Disabled", ru: "Отключено" },
-          "day-night": { en: "Day / Night", ru: "День / Ночь" }
+          "day-night": { en: "Day / Night", ru: "День / Ночь" },
+          "pool-heat": { en: "Pool heat", ru: "Обогрев бассейна" }
         },
         order: 15
       }
@@ -347,6 +356,24 @@ function buildVNISHDevice(
             log(message);
           }
         );
+      }
+    }
+  });
+
+  defineRule("vnish-schedule-mode-changed" + deviceName, {
+    whenChanged: [
+      scheduleModeTopicName
+    ],
+    then: function () {
+      var scheduleMode = dev[scheduleModeTopicName];
+      if (scheduleMode == "day-night") {
+        if (isNightRate()) {
+          dev[selectedPresetTopicName] = "performance";
+        } else {
+          dev[selectedPresetTopicName] = "lowpower";
+        }
+      } else if (scheduleMode == "pool-heat") {
+        dev[selectedPresetTopicName] = "optimal";
       }
     }
   });
