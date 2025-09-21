@@ -11,24 +11,56 @@ function arrayToString(arr) {
         .join(','); // Объединяем все строки через запятую
 }
 
+// Преобразование времени в минуты
+function toMinutes(timeStr) {
+    var parts = timeStr.split(':');
+    var hours = parseInt(parts[0], 10);
+    var minutes = parseInt(parts[1], 10);
+    return hours * 60 + minutes;
+}
+
+// Форматирование минут в строку HH:MM
+function toTimeStr(totalMinutes) {
+    // Нормализация времени (включая отрицательные значения и >24 часов)
+    totalMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+    var hours = Math.floor(totalMinutes / 60) % 24;
+    var minutes = Math.floor(totalMinutes % 60);
+    return (hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes;
+}
+
+function optimizedSchedule(windows) {
+    var result = [null, null, null, null];
+    if (windows[0] > 0) {
+        var morningTime = toMinutes("09:00");
+        var start = Math.round(morningTime - windows[0]/2);
+        var end = Math.round(morningTime + windows[0]/2);
+        result[0] = [toTimeStr(start), toTimeStr(end)];
+    }
+
+    if (windows[1] > 0) {
+        var dayTime = toMinutes("15:00");
+        var start = Math.round(dayTime - windows[1]/2);
+        var end = Math.round(dayTime + windows[1]/2);
+        result[1] = [toTimeStr(start), toTimeStr(end)];
+    }
+
+    if (windows[2] > 0) {
+        var eveningTime = toMinutes("21:00");
+        var start = Math.round(eveningTime - windows[2]/2);
+        var end = Math.round(eveningTime + windows[2]/2);
+        result[2] = [toTimeStr(start), toTimeStr(end)];
+    }
+
+    if (windows[3] > 0) {
+        var nightTime = toMinutes("03:00");
+        var start = Math.round(nightTime - windows[3]/2);
+        var end = Math.round(nightTime + windows[3]/2);
+        result[3] = [toTimeStr(start), toTimeStr(end)];
+    }
+    return result;
+}
+
 function schedule(sunriseStr, sunsetStr, windows) {
-    // Преобразование времени в минуты
-    function toMinutes(timeStr) {
-        var parts = timeStr.split(':');
-        var hours = parseInt(parts[0], 10);
-        var minutes = parseInt(parts[1], 10);
-        return hours * 60 + minutes;
-    }
-
-    // Форматирование минут в строку HH:MM
-    function toTimeStr(totalMinutes) {
-        // Нормализация времени (включая отрицательные значения и >24 часов)
-        totalMinutes = ((totalMinutes % 1440) + 1440) % 1440;
-        var hours = Math.floor(totalMinutes / 60) % 24;
-        var minutes = Math.floor(totalMinutes % 60);
-        return (hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes;
-    }
-
     var sunRise = toMinutes(sunriseStr);
     var sunSet = toMinutes(sunsetStr);
     var result = [null, null, null, null]; // [утро, день, вечер, ночь]
@@ -197,6 +229,16 @@ function makePoolFiltrationController(
                     2: { en: "Backwash", ru: "Обратная промывка" }
                 }
             },
+            schedule_type: {
+                title: "schedule type",
+                type: "value",
+                value: 0,
+                readonly: false,
+                enum: {
+                    0: { en: "Sunrise-Sunset", ru: "Рассвет-Закат" },
+                    1: { en: "Optimized", ru: "Оптимизированный" }
+                }
+            },
             schedule_mode: {
                 title: "schedule mode",
                 type: "value",
@@ -227,6 +269,7 @@ function makePoolFiltrationController(
 
     var scheduleTopicName = deviceName + "/schedule";
     var scheduleModeTopicName = deviceName + "/schedule_mode";
+    var scheduleTypeTopicName = deviceName + "/schedule_type";
 
     var sunriseTimeTopicName = deviceName + "/sunrise_time";
     var sunsetTimeTopicName = deviceName + "/sunset_time";
@@ -245,7 +288,8 @@ function makePoolFiltrationController(
             morningWeightTopicName,
             eveningWeightTopicName,
             sunriseTimeTopicName,
-            sunsetTimeTopicName
+            sunsetTimeTopicName,
+            scheduleTypeTopicName
         ],
         then: function (newValue) {
             var poolVolume = dev[poolVolumeTopicName];
@@ -266,12 +310,21 @@ function makePoolFiltrationController(
             var eveningHours = workHoursPerDay * eveningWeight / totalWeight;
             var sunriseTime = dev[sunriseTimeTopicName];
             var sunsetTime = dev[sunsetTimeTopicName];
+            var scheduleType = dev[scheduleTypeTopicName];
 
-            var times = schedule(
-                sunriseTime,
-                sunsetTime,
-                [morningHours * 60, dayHours * 60, eveningHours * 60, nightHours * 60]
-            );
+            var times = [];
+
+            if (scheduleType == 0) {
+                times = schedule(
+                    sunriseTime,
+                    sunsetTime,
+                    [morningHours * 60, dayHours * 60, eveningHours * 60, nightHours * 60]
+                );
+            } else {
+                times = optimizedSchedule(
+                    [morningHours * 60, dayHours * 60, eveningHours * 60, nightHours * 60]
+                );
+            }
 
             var formattedTimes = arrayToString(times);
 
