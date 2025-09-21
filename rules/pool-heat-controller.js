@@ -66,7 +66,7 @@ function makePoolHeatController(
             var poolFiltrationMode = dev[poolFiltrationModeTopicName];
             var currentTemperature = dev[currentTemperatureTopicName];
             var oldActiveValue = dev[activeTopicName];
-            var newActiveValue = false;
+            var newActiveValue = oldActiveValue;
             if (mode == 1 && poolFiltrationMode == 1) {
                 var targetTemperature = dev[targetTopicName];
                 var hysteresis = dev[hysteresisTopicName];
@@ -106,13 +106,9 @@ makePoolHeatController(
     function () {
         dev["ASIC-cooling-controller-T21/mode"] = 4;
         dev["calculated-flow-sensor-POOL FILTR/activated"] = true;
-        dev["ANTMINER T21-1/schedule_mode"] = "pool-heat";
-        dev["ANTMINER T21-2/schedule_mode"] = "pool-heat";
     },
     function () {
         dev["ASIC-cooling-controller-T21/mode"] = 1;
         dev["calculated-flow-sensor-POOL FILTR/activated"] = false;
-        dev["ANTMINER T21-1/schedule_mode"] = "peak-offpeak-night";
-        dev["ANTMINER T21-2/schedule_mode"] = "peak-offpeak-night";
     }
 );
