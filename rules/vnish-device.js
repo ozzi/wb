@@ -3,7 +3,7 @@ function performGET(
   endpoint,
   callback
 ) {
-  var command = 'curl -s --connect-timeout 1 --max-time 1 -X GET {}{}'.format(
+  var command = 'curl -s --connect-timeout 2 --max-time 2 -X GET {}{}'.format(
     host,
     endpoint
   );
@@ -145,6 +145,14 @@ function isNightRate() {
     return currentHour >= 23 || currentHour < 7;
 }
 
+function isPeakRate() {
+    var currentTime = new Date();
+    var currentHour = currentTime.getHours();
+    
+    // Пиковый тариф с 07:00 до 10:00 и с 17:00 до 21:00
+    return (currentHour >= 7 && currentHour < 10) || (currentHour >= 17 && currentHour < 21);
+}
+
 function buildVNISHDevice(
   deviceName,
   hostName,
@@ -220,7 +228,8 @@ function buildVNISHDevice(
         enum: {
           "optimal": { en: "Optimal", ru: "Оптимальный" },
           "lowpower": { en: "Low power", ru: "Низкое энергопотребление" },
-          "performance": { en: "Performance", ru: "Производительный" }
+          "performance": { en: "Performance", ru: "Производительный" },
+          "pool": { en: "Pool", ru: "Бассейн" }
         },
         order: 11
       },
@@ -245,6 +254,13 @@ function buildVNISHDevice(
         readonly: false,
         order: 14
       },
+      pool_preset: {
+        title: "pool preset",
+        type: "value",
+        value: 3480,
+        readonly: false,
+        order: 15
+      },
       schedule_mode: {
         title: "schedule mode",
         type: "text",
@@ -253,9 +269,10 @@ function buildVNISHDevice(
         enum: {
           "disabled": { en: "Disabled", ru: "Отключено" },
           "day-night": { en: "Day / Night", ru: "День / Ночь" },
-          "pool-heat": { en: "Pool heat", ru: "Обогрев бассейна" }
+          "pool-heat": { en: "Pool heat", ru: "Обогрев бассейна" },
+          "peak-offpeak-night": { en: "Peak / Off-Peak / Night", ru: "Пик / Полупик / Ночь" }
         },
-        order: 15
+        order: 20
       }
     }
   });
@@ -276,6 +293,7 @@ function buildVNISHDevice(
   var performancePresetTopicName = deviceName + "/performance_preset";
   var lowpowerPresetTopicName = deviceName + "/lowpower_preset";
   var optimalPresetTopicName = deviceName + "/optimal_preset";
+  var poolPresetTopicName = deviceName + "/pool_preset";
 
   var scheduleModeTopicName = deviceName + "/schedule_mode";
 
@@ -323,35 +341,36 @@ function buildVNISHDevice(
       selectedPresetTopicName,
       performancePresetTopicName,
       lowpowerPresetTopicName,
-      optimalPresetTopicName
+      optimalPresetTopicName,
+      poolPresetTopicName
     ],
     then: function () {
       var selectedPreset = dev[selectedPresetTopicName];
       var performancePreset = dev[performancePresetTopicName];
       var lowpowerPreset = dev[lowpowerPresetTopicName];
       var optimalPreset = dev[optimalPresetTopicName];
+      var poolPreset = dev[poolPresetTopicName];
       var currentPreset = dev[currentPresetTopicName];
-      var preset = null;
+      var newPreset = currentPreset;
       if (selectedPreset == "optimal") {
-        preset = optimalPreset;
+        newPreset = optimalPreset;
       } else if (selectedPreset == "performance") {
-        preset = performancePreset;
+        newPreset = performancePreset;
       } else if (selectedPreset == "lowpower") {
-        preset = lowpowerPreset;
-      }
-      if (preset == null) {
-        return;
+        newPreset = lowpowerPreset;
+      } else if (selectedPreset == "pool") {
+        newPreset = poolPreset;
       }
       
-      if (currentPreset != preset) {
+      if (currentPreset != newPreset) {
         postUpdatePerformancePreset(
           hostName,
           dev[apikeyTopicName],
-          preset,
+          newPreset,
           function() {
             var message = '{}: change preset to {}'.format(
               deviceName,
-              preset
+              newPreset
             );
             log(message);
           }
@@ -372,28 +391,66 @@ function buildVNISHDevice(
         } else {
           dev[selectedPresetTopicName] = "lowpower";
         }
+      } else if (scheduleMode == "peak-offpeak-night") {
+        if (isNightRate()) {
+          dev[selectedPresetTopicName] = "performance";
+        } else if (isPeakRate()) {
+          dev[selectedPresetTopicName] = "lowpower";
+        } else {
+          dev[selectedPresetTopicName] = "optimal";
+        }
       } else if (scheduleMode == "pool-heat") {
-        dev[selectedPresetTopicName] = "optimal";
+        dev[selectedPresetTopicName] = "pool";
       }
     }
   });
 
-  defineRule("vnish-turn-performance-preset" + deviceName, {
+  defineRule("vnish-turn-night-preset" + deviceName, {
     when: cron("00 00 23 * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
-      if (scheduleMode == "day-night") {
+      if (scheduleMode == "day-night" || scheduleMode == "peak-offpeak-night") {
         dev[selectedPresetTopicName] = "performance";
       }
     }
   });
 
-  defineRule("vnish-turn-lowmode-preset" + deviceName, {
+  defineRule("vnish-turn-peak-preset" + deviceName, {
     when: cron("00 00 07 * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
-      if (scheduleMode == "day-night") {
+      if (scheduleMode == "day-night" || scheduleMode == "peak-offpeak-night") {
         dev[selectedPresetTopicName] = "lowpower";
+      }
+    }
+  });
+
+  defineRule("vnish-turn-offpeak-preset" + deviceName, {
+    when: cron("00 00 10 * *"),
+    then: function () {
+      var scheduleMode = dev[scheduleModeTopicName];
+      if (scheduleMode == "peak-offpeak-night") {
+        dev[selectedPresetTopicName] = "optimal";
+      }
+    }
+  });
+
+  defineRule("vnish-turn-peak2-preset" + deviceName, {
+    when: cron("00 00 17 * *"),
+    then: function () {
+      var scheduleMode = dev[scheduleModeTopicName];
+      if (scheduleMode == "peak-offpeak-night") {
+        dev[selectedPresetTopicName] = "lowpower";
+      }
+    }
+  });
+
+  defineRule("vnish-turn-offpeak2-preset" + deviceName, {
+    when: cron("00 00 21 * *"),
+    then: function () {
+      var scheduleMode = dev[scheduleModeTopicName];
+      if (scheduleMode == "peak-offpeak-night") {
+        dev[selectedPresetTopicName] = "optimal";
       }
     }
   });
@@ -496,12 +553,12 @@ function buildVNISHDevice(
 
 buildVNISHDevice(
   "ANTMINER T21-1",
-  "https://t21-one.outzzz.keenetic.pro",
+  "http://192.168.0.52",
   5000
 );
 
 buildVNISHDevice(
   "ANTMINER T21-2",
-  "https://t21-two.outzzz.keenetic.pro",
+  "http://192.168.0.53",
   5000
 );
