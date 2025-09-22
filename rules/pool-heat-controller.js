@@ -104,11 +104,9 @@ makePoolHeatController(
     "wb-m1w2_69/External Sensor 1",
     "pool-filtration-ctrl-outdoor/mode",
     function () {
-        dev["ASIC-cooling-controller-T21/mode"] = 4;
         dev["calculated-flow-sensor-POOL FILTR/activated"] = true;
     },
     function () {
-        dev["ASIC-cooling-controller-T21/mode"] = 1;
         dev["calculated-flow-sensor-POOL FILTR/activated"] = false;
     }
 );
