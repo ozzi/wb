@@ -29,14 +29,14 @@ function makePoolHeatController(
                 value: 20,
                 readonly: true
             },
-            tolerance: {
-                title: "tolerance",
+            hysteresis: {
+                title: "hysteresis",
                 type: "value",
                 value: 0.5,
                 readonly: false
             },
-            active: {
-                title: "active",
+            heat_request: {
+                title: "heat request",
                 type: "switch",
                 value: false,
                 readonly: true
@@ -46,29 +46,29 @@ function makePoolHeatController(
 
     var modeTopicName = deviceName + "/mode";
     var targetTopicName = deviceName + "/target";
-    var activeTopicName = deviceName + "/active";
-    var hysteresisTopicName = deviceName + "/tolerance";
+    var heatRequestTopicName = deviceName + "/heat_request";
+    var hysteresisTopicName = deviceName + "/hysteresis";
     var currentTopicName = deviceName + "/current";
 
     function applyHeatState() {
         var mode = dev[modeTopicName];
         var poolFiltrationMode = dev[poolFiltrationModeTopicName];
         var currentTemperature = dev[currentTemperatureTopicName];
-        var oldActiveValue = dev[activeTopicName];
-        var newActiveValue = oldActiveValue;
+        var oldHeatRequest = dev[heatRequestTopicName];
+        var newHeatRequest = oldHeatRequest;
         if (mode == 1 && poolFiltrationMode == 1) {
             var targetTemperature = dev[targetTopicName];
             var hysteresis = dev[hysteresisTopicName];
             if (currentTemperature < (targetTemperature - hysteresis)) {
-                newActiveValue = true;
+                newHeatRequest = true;
             } else if (currentTemperature > (targetTemperature + hysteresis)) {
-                newActiveValue = false;
+                newHeatRequest = false;
             }
         } else {
-            newActiveValue = false;
+            newHeatRequest = false;
         }
-        if (oldActiveValue != newActiveValue) {
-            dev[activeTopicName] = newActiveValue;
+        if (oldHeatRequest != newHeatRequest) {
+            dev[heatRequestTopicName] = newHeatRequest;
         }
         dev[currentTopicName] = currentTemperature;
     }
