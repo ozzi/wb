@@ -4,6 +4,8 @@ function makePoolHeatController(
     poolFiltrationModeTopicName
 ) {
     var deviceName = "pool-heat-ctrl-" + name;
+    var defaultHysteresis = 0.5;
+
     defineVirtualDevice(deviceName, {
         title: "Pool Heat Controller - " + name,
         cells: {
@@ -32,7 +34,7 @@ function makePoolHeatController(
             hysteresis: {
                 title: "hysteresis",
                 type: "value",
-                value: 0.5,
+                value: defaultHysteresis,
                 readonly: false
             },
             heat_request: {
@@ -58,6 +60,10 @@ function makePoolHeatController(
         return value !== null && value !== undefined;
     }
 
+    function isValidHysteresis(value) {
+        return value !== null && value !== undefined && typeof value === "number" && !isNaN(value) && value >= 0;
+    }
+
     function isControllerActive(mode, filtrationMode) {
         return mode === 1 && filtrationMode === 1;
     }
@@ -78,6 +84,10 @@ function makePoolHeatController(
         } else if (isControllerActive(mode, poolFiltrationMode)) {
             var targetTemperature = dev[targetTopicName];
             var hysteresis = dev[hysteresisTopicName];
+            if (!isValidHysteresis(hysteresis)) {
+                log.warning("[pool-heat-ctrl-{}] invalid hysteresis: {}, using default: {}", name, hysteresis, defaultHysteresis);
+                hysteresis = defaultHysteresis;
+            }
             if (currentTemperature < (targetTemperature - hysteresis)) {
                 newHeatRequest = true;
             } else if (currentTemperature > (targetTemperature + hysteresis)) {
