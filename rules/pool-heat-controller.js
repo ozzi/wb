@@ -52,6 +52,43 @@ function makePoolHeatController(
     var hysteresisTopicName = deviceName + "/tolerance";
     var currentTopicName = deviceName + "/current";
 
+    function applyHeatState() {
+        var mode = dev[modeTopicName];
+        var poolFiltrationMode = dev[poolFiltrationModeTopicName];
+        var currentTemperature = dev[currentTemperatureTopicName];
+        var oldActiveValue = dev[activeTopicName];
+        var newActiveValue = oldActiveValue;
+        if (mode == 1 && poolFiltrationMode == 1) {
+            var targetTemperature = dev[targetTopicName];
+            var hysteresis = dev[hysteresisTopicName];
+            if (currentTemperature < (targetTemperature - hysteresis)) {
+                newActiveValue = true;
+            } else if (currentTemperature > (targetTemperature + hysteresis)) {
+                newActiveValue = false;
+            }
+        } else {
+            newActiveValue = false;
+        }
+        if (oldActiveValue != newActiveValue) {
+            dev[activeTopicName] = newActiveValue;
+        }
+        dev[currentTopicName] = currentTemperature;
+    }
+
+    defineRule("init-" + name, {
+        asSoonAs: function () {
+            return true;
+        },
+        then: function () {
+            applyHeatState();
+            if (dev[activeTopicName]) {
+                heatOnClosure();
+            } else {
+                heatOffClosure();
+            }
+        }
+    });
+
     defineRule("mode-changed-" + name, {
         whenChanged: [
             modeTopicName,
@@ -61,26 +98,7 @@ function makePoolHeatController(
             hysteresisTopicName
         ],
         then: function () {
-            var mode = dev[modeTopicName];
-            var poolFiltrationMode = dev[poolFiltrationModeTopicName];
-            var currentTemperature = dev[currentTemperatureTopicName];
-            var oldActiveValue = dev[activeTopicName];
-            var newActiveValue = oldActiveValue;
-            if (mode == 1 && poolFiltrationMode == 1) {
-                var targetTemperature = dev[targetTopicName];
-                var hysteresis = dev[hysteresisTopicName];
-                if (currentTemperature < (targetTemperature - hysteresis)) {
-                    newActiveValue = true;
-                } else if (currentTemperature > (targetTemperature + hysteresis)) {
-                    newActiveValue = false;
-                }
-            } else {
-                newActiveValue = false;
-            }
-            if (oldActiveValue != newActiveValue) {
-                dev[activeTopicName] = newActiveValue;
-            }
-            dev[currentTopicName] = currentTemperature;
+            applyHeatState();
         }
     });
 
