@@ -28,7 +28,6 @@ function makePoolHeatController(
             current: {
                 title: "current temperature",
                 type: "value",
-                type: "value",
                 value: 20,
                 readonly: true
             },
