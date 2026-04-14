@@ -101,6 +101,81 @@ function postUpdatePerformancePreset(host, apikey, preset, callback) {
   performPayloadPOST(host, "/api/v1/settings", apikey, settings, callback);
 }
 
+function getBoardTemperatures(sensors, excludedLocIds) {
+  if (!sensors || sensors.length === 0) {
+    return { min: undefined, max: undefined };
+  }
+
+  var filteredSensors = sensors.filter(function (sensor) {
+    return excludedLocIds.indexOf(sensor.loc) === -1;
+  });
+
+  if (filteredSensors.length === 0) {
+    return { min: undefined, max: undefined };
+  }
+
+  var min = filteredSensors[0].board;
+  var max = filteredSensors[0].board;
+
+  for (var i = 1; i < filteredSensors.length; i++) {
+    var boardTemp = filteredSensors[i].board;
+    if (boardTemp < min) min = boardTemp;
+    if (boardTemp > max) max = boardTemp;
+  }
+
+  return { min: min, max: max };
+}
+
+function processSensorsTemperatures(data, excludedLocIds) {
+  var result = {};
+  if (!data || !Array.isArray(data)) return result;
+
+  for (var i = 0; i < data.length; i++) {
+    var item = data[i];
+    var id = item.id;
+
+    if (id !== undefined) {
+      var inletFromSensors = undefined;
+      var outletFromSensors = undefined;
+
+      if (item.sensors && Array.isArray(item.sensors)) {
+        for (var j = 0; j < item.sensors.length; j++) {
+          var s = item.sensors[j];
+          if (s.loc === 41) inletFromSensors = s.board;
+          if (s.loc === 50) outletFromSensors = s.board;
+        }
+      }
+
+      var boardTemps = getBoardTemperatures(item.sensors, excludedLocIds);
+
+      result[id] = {
+        min: boardTemps.min,
+        max: boardTemps.max,
+        inlet: inletFromSensors,
+        outlet: outletFromSensors
+      };
+    }
+  }
+  return result;
+}
+function processWaterTemperatures(data) {
+  var result = {};
+  if (!data || !Array.isArray(data)) return result;
+
+  for (var i = 0; i < data.length; i++) {
+    var item = data[i];
+    if (item.id !== undefined &&
+      item.inlet_water_temp !== undefined && item.inlet_water_temp !== null &&
+      item.outlet_water_temp !== undefined && item.outlet_water_temp !== null) {
+
+      result[item.id] = {
+        inlet: item.inlet_water_temp,
+        outlet: item.outlet_water_temp
+      };
+    }
+  }
+  return result;
+}
 
 function getSummary(host, callback) {
   performGET(
@@ -108,13 +183,14 @@ function getSummary(host, callback) {
     "/api/v1/summary",
     function (serverResponse) {
       if (serverResponse == null) {
-        callback("unavailable", 0);
+        callback("unavailable", 0, []);
       } else {
         var response = JSON.parse(serverResponse);
         var state = response["miner"]["miner_status"]["miner_state"];
         var powerStr = response["miner"]["power_consumption"];
         var power = parseInt(powerStr);
-        callback(state, power);
+        var temps = processWaterTemperatures(response["miner"]["chains"]);
+        callback(state, power, temps);
       }
     }
   );
@@ -137,20 +213,36 @@ function getPerfSummary(host, callback) {
   );
 }
 
+function getChains(host, callback) {
+  performGET(
+    host,
+    "/api/v1/chains",
+    function (serverResponse) {
+      if (serverResponse == null) {
+        callback([]);
+      } else {
+        var response = JSON.parse(serverResponse);
+        var temps = processSensorsTemperatures(response, [41, 50]);
+        callback(temps);
+      }
+    }
+  );
+}
+
 function isNightRate() {
-    var currentTime = new Date();
-    var currentHour = currentTime.getHours();
-    
-    // Ночной тариф с 23:00 до 7:00
-    return currentHour >= 23 || currentHour < 7;
+  var currentTime = new Date();
+  var currentHour = currentTime.getHours();
+
+  // Ночной тариф с 23:00 до 7:00
+  return currentHour >= 23 || currentHour < 7;
 }
 
 function isPeakRate() {
-    var currentTime = new Date();
-    var currentHour = currentTime.getHours();
-    
-    // Пиковый тариф с 07:00 до 10:00 и с 17:00 до 21:00
-    return (currentHour >= 7 && currentHour < 10) || (currentHour >= 17 && currentHour < 21);
+  var currentTime = new Date();
+  var currentHour = currentTime.getHours();
+
+  // Пиковый тариф с 07:00 до 10:00 и с 17:00 до 21:00
+  return (currentHour >= 7 && currentHour < 10) || (currentHour >= 17 && currentHour < 21);
 }
 
 function buildVNISHDevice(
@@ -228,8 +320,7 @@ function buildVNISHDevice(
         enum: {
           "optimal": { en: "Optimal", ru: "Оптимальный" },
           "lowpower": { en: "Low power", ru: "Низкое энергопотребление" },
-          "performance": { en: "Performance", ru: "Производительный" },
-          "pool": { en: "Pool", ru: "Бассейн" }
+          "performance": { en: "Performance", ru: "Производительный" }
         },
         order: 11
       },
@@ -254,13 +345,6 @@ function buildVNISHDevice(
         readonly: false,
         order: 14
       },
-      pool_preset: {
-        title: "pool preset",
-        type: "value",
-        value: 3480,
-        readonly: false,
-        order: 15
-      },
       schedule_mode: {
         title: "schedule mode",
         type: "text",
@@ -268,11 +352,93 @@ function buildVNISHDevice(
         readonly: false,
         enum: {
           "disabled": { en: "Disabled", ru: "Отключено" },
-          "day-night": { en: "Day / Night", ru: "День / Ночь" },
-          "pool-heat": { en: "Pool heat", ru: "Обогрев бассейна" },
           "peak-offpeak-night": { en: "Peak / Off-Peak / Night", ru: "Пик / Полупик / Ночь" }
         },
         order: 20
+      },
+      pcb_1_inlet: {
+        title: "pcb 1 inlet",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 31
+      },
+      pcb_1_outlet: {
+        title: "pcb 1 outlet",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 32
+      },
+      pcb_1_min_temp: {
+        title: "pcb 1 min temp",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 33
+      },
+      pcb_1_max_temp: {
+        title: "pcb 1 max temp",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 34
+      },
+      pcb_2_inlet: {
+        title: "pcb 2 inlet",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 41
+      },
+      pcb_2_outlet: {
+        title: "pcb 2 outlet",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 42
+      },
+      pcb_2_min_temp: {
+        title: "pcb 2 min temp",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 43
+      },
+      pcb_2_max_temp: {
+        title: "pcb 2 max temp",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 44
+      },
+      pcb_3_inlet: {
+        title: "pcb 3 inlet",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 51
+      },
+      pcb_3_outlet: {
+        title: "pcb 3 outlet",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 52
+      },
+      pcb_3_min_temp: {
+        title: "pcb 3 min temp",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 53
+      },
+      pcb_3_max_temp: {
+        title: "pcb 3 max temp",
+        type: "value",
+        value: 0,
+        readonly: true,
+        order: 54
       }
     }
   });
@@ -293,7 +459,6 @@ function buildVNISHDevice(
   var performancePresetTopicName = deviceName + "/performance_preset";
   var lowpowerPresetTopicName = deviceName + "/lowpower_preset";
   var optimalPresetTopicName = deviceName + "/optimal_preset";
-  var poolPresetTopicName = deviceName + "/pool_preset";
 
   var scheduleModeTopicName = deviceName + "/schedule_mode";
 
@@ -312,21 +477,64 @@ function buildVNISHDevice(
           function () {
             getSummary(
               hostName,
-              function(newState, newPower) {
+              function (newState, newPower, newWaterTemps) {
                 if (newState != dev[stateTopicName]) {
                   dev[stateTopicName] = newState;
                 }
                 if (newPower != dev[powerTopicName]) {
                   dev[powerTopicName] = newPower;
                 }
+                var chainIds = [1, 2, 3];
+
+                chainIds.forEach(function (id) {
+                  var topicInlet = deviceName + "/pcb_" + id + "_inlet";
+                  var topicOutlet = deviceName + "/pcb_" + id + "_outlet";
+                  if (newWaterTemps.hasOwnProperty(id)) {
+                    var data = newWaterTemps[id];
+                    if (data.inlet !== undefined && data.inlet !== null) {
+                      if (dev[topicInlet] !== data.inlet) {
+                        dev[topicInlet] = data.inlet;
+                      }
+                    }
+                    if (data.outlet !== undefined && data.outlet !== null) {
+                      if (dev[topicOutlet] !== data.outlet) {
+                        dev[topicOutlet] = data.outlet;
+                      }
+                    }
+                  }
+                });
               }
             );
             getPerfSummary(
               hostName,
-              function(newPreset) {
+              function (newPreset) {
                 if (newPreset != dev[currentPresetTopicName]) {
                   dev[currentPresetTopicName] = newPreset;
                 }
+              }
+            );
+            getChains(
+              hostName,
+              function (newTemps) {
+                [1, 2, 3].forEach(function (id) {
+                  var data = newTemps[id];
+                  var topicMin = deviceName + "/pcb_" + id + "_min_temp";
+                  var topicMax = deviceName + "/pcb_" + id + "_max_temp";
+                  var topicInlet = deviceName + "/pcb_" + id + "_inlet";
+                  var topicOutlet = deviceName + "/pcb_" + id + "_outlet";
+
+                  if (data) {
+                    dev[topicMin] = (data.min !== undefined && data.min !== null) ? data.min : -1;
+                    dev[topicMax] = (data.max !== undefined && data.max !== null) ? data.max : -1;
+                    dev[topicInlet] = (data.inlet !== undefined && data.inlet !== null) ? data.inlet : -1;
+                    dev[topicOutlet] = (data.outlet !== undefined && data.outlet !== null) ? data.outlet : -1;
+                  } else {
+                    dev[topicMin] = -1;
+                    dev[topicMax] = -1;
+                    dev[topicInlet] = -1;
+                    dev[topicOutlet] = -1;
+                  }
+                });
               }
             );
           },
@@ -341,40 +549,54 @@ function buildVNISHDevice(
       selectedPresetTopicName,
       performancePresetTopicName,
       lowpowerPresetTopicName,
-      optimalPresetTopicName,
-      poolPresetTopicName
+      optimalPresetTopicName
     ],
     then: function () {
       var selectedPreset = dev[selectedPresetTopicName];
-      var performancePreset = dev[performancePresetTopicName];
-      var lowpowerPreset = dev[lowpowerPresetTopicName];
-      var optimalPreset = dev[optimalPresetTopicName];
-      var poolPreset = dev[poolPresetTopicName];
-      var currentPreset = dev[currentPresetTopicName];
-      var newPreset = currentPreset;
-      if (selectedPreset == "optimal") {
-        newPreset = optimalPreset;
-      } else if (selectedPreset == "performance") {
-        newPreset = performancePreset;
-      } else if (selectedPreset == "lowpower") {
-        newPreset = lowpowerPreset;
-      } else if (selectedPreset == "pool") {
-        newPreset = poolPreset;
+      var targetPresetValue = null;
+
+      // 1. Определяем целевой пресет
+      if (selectedPreset == "optimal") targetPresetValue = dev[optimalPresetTopicName];
+      else if (selectedPreset == "performance") targetPresetValue = dev[performancePresetTopicName];
+      else if (selectedPreset == "lowpower") targetPresetValue = dev[lowpowerPresetTopicName];
+
+      if (targetPresetValue === null || targetPresetValue === undefined) return;
+
+      var target = targetPresetValue.toString();
+      var currentState = (dev[stateTopicName] || "").toString().toLowerCase();
+      var currentPreset = (dev[currentPresetTopicName] || "").toString();
+
+      // 2. Если цель "0" — останавливаем майнинг (если он еще не остановлен)
+      if (target === "0") {
+        var activeStates = ["mining", "starting", "auto-tuning", "initializing", "restarting"];
+        if (activeStates.indexOf(currentState) !== -1) {
+          log("{}: Stopping. Target is 0.", deviceName);
+          postMiningStop(hostName, dev[apikeyTopicName], function (res) { });
+        }
+        return;
       }
-      
-      if (currentPreset != newPreset) {
-        postUpdatePerformancePreset(
-          hostName,
-          dev[apikeyTopicName],
-          newPreset,
-          function() {
-            var message = '{}: change preset to {}'.format(
-              deviceName,
-              newPreset
-            );
-            log(message);
+
+      // 3. Если аппарат в состоянии ошибки — НИЧЕГО не делаем
+      if (currentState === "failure") {
+        log("{}: Logic blocked. Device is in FAILURE state.", deviceName);
+        return;
+      }
+
+      // 4. Если аппарат остановлен — пробуем запустить
+      if (currentState === "stopped" || currentState === "shutting-down") {
+        log("{}: Device is stopped. Sending Start.", deviceName);
+        postMiningStart(hostName, dev[apikeyTopicName], function (res) {
+          // После старта проверяем, нужно ли обновить пресет
+          if (currentPreset !== target) {
+            log("{}: Updating preset to {} after start.", deviceName, target);
+            postUpdatePerformancePreset(hostName, dev[apikeyTopicName], target, function (res) { });
           }
-        );
+        });
+      }
+      // 5. Если уже работает — только обновляем пресет, если он отличается
+      else if (currentPreset !== target) {
+        log("{}: Updating preset to {}. Current is {}.", deviceName, target, currentPreset);
+        postUpdatePerformancePreset(hostName, dev[apikeyTopicName], target, function (res) { });
       }
     }
   });
@@ -385,13 +607,7 @@ function buildVNISHDevice(
     ],
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
-      if (scheduleMode == "day-night") {
-        if (isNightRate()) {
-          dev[selectedPresetTopicName] = "performance";
-        } else {
-          dev[selectedPresetTopicName] = "lowpower";
-        }
-      } else if (scheduleMode == "peak-offpeak-night") {
+      if (scheduleMode == "peak-offpeak-night") {
         if (isNightRate()) {
           dev[selectedPresetTopicName] = "performance";
         } else if (isPeakRate()) {
@@ -399,8 +615,6 @@ function buildVNISHDevice(
         } else {
           dev[selectedPresetTopicName] = "optimal";
         }
-      } else if (scheduleMode == "pool-heat") {
-        dev[selectedPresetTopicName] = "pool";
       }
     }
   });
@@ -409,7 +623,7 @@ function buildVNISHDevice(
     when: cron("00 00 23 * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
-      if (scheduleMode == "day-night" || scheduleMode == "peak-offpeak-night") {
+      if (scheduleMode == "peak-offpeak-night") {
         dev[selectedPresetTopicName] = "performance";
       }
     }
@@ -419,7 +633,7 @@ function buildVNISHDevice(
     when: cron("00 00 07 * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
-      if (scheduleMode == "day-night" || scheduleMode == "peak-offpeak-night") {
+      if (scheduleMode == "peak-offpeak-night") {
         dev[selectedPresetTopicName] = "lowpower";
       }
     }
@@ -463,7 +677,7 @@ function buildVNISHDevice(
       postMiningStart(
         hostName,
         dev[apikeyTopicName],
-        function(value) {
+        function (value) {
           var message = '{}: mining start with {}'.format(
             deviceName,
             value
@@ -482,7 +696,7 @@ function buildVNISHDevice(
       postMiningStop(
         hostName,
         dev[apikeyTopicName],
-        function(value) {
+        function (value) {
           var message = '{}: mining stop with {}'.format(
             deviceName,
             value
@@ -501,7 +715,7 @@ function buildVNISHDevice(
       postMiningRestart(
         hostName,
         dev[apikeyTopicName],
-        function(value) {
+        function (value) {
           var message = '{}: mining restart with {}'.format(
             deviceName,
             value
@@ -520,7 +734,7 @@ function buildVNISHDevice(
       postMiningResume(
         hostName,
         dev[apikeyTopicName],
-        function(value) {
+        function (value) {
           var message = '{}: mining resume with {}'.format(
             deviceName,
             value
@@ -539,7 +753,7 @@ function buildVNISHDevice(
       postMiningPause(
         hostName,
         dev[apikeyTopicName],
-        function(value) {
+        function (value) {
           var message = '{}: mining pause with {}'.format(
             deviceName,
             value
@@ -552,13 +766,7 @@ function buildVNISHDevice(
 }
 
 buildVNISHDevice(
-  "ANTMINER T21-1",
-  "http://192.168.0.52",
-  5000
-);
-
-buildVNISHDevice(
-  "ANTMINER T21-2",
-  "http://192.168.0.53",
+  "ANTMINER S21e",
+  "http://192.168.0.111",
   5000
 );
