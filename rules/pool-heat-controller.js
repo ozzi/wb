@@ -54,6 +54,10 @@ function makePoolHeatController(
         return value !== null && value !== undefined && typeof value === "number" && !isNaN(value);
     }
 
+    function isValidFiltrationMode(value) {
+        return value !== null && value !== undefined;
+    }
+
     function applyHeatState() {
         var mode = dev[modeTopicName];
         var poolFiltrationMode = dev[poolFiltrationModeTopicName];
@@ -63,6 +67,9 @@ function makePoolHeatController(
 
         if (!isValidTemperature(currentTemperature)) {
             log.warning("[pool-heat-ctrl-{}] invalid temperature: {}", name, currentTemperature);
+            newHeatRequest = false;
+        } else if (!isValidFiltrationMode(poolFiltrationMode)) {
+            log.warning("[pool-heat-ctrl-{}] filtration mode unavailable", name);
             newHeatRequest = false;
         } else if (mode == 1 && poolFiltrationMode == 1) {
             var targetTemperature = dev[targetTopicName];
