@@ -20,7 +20,7 @@ function makePoolHeatController(
             target: {
                 title: "target temperature",
                 type: "value",
-                value: 20,
+                value: 28,
                 readonly: false
             },
             current: {
