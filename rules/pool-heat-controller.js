@@ -1,9 +1,7 @@
 function makePoolHeatController(
     name,
     currentTemperatureTopicName,
-    poolFiltrationModeTopicName,
-    heatOnClosure,
-    heatOffClosure
+    poolFiltrationModeTopicName
 ) {
     var deviceName = "pool-heat-ctrl-" + name;
     defineVirtualDevice(deviceName, {
@@ -88,35 +86,11 @@ function makePoolHeatController(
         }
     });
 
-    defineRule("active-changed-" + name, {
-        whenChanged: [
-            activeTopicName
-        ],
-        then: function (newValue) {
-            if (newValue == false) {
-                heatOffClosure();
-            } else {
-                heatOnClosure();
-            }
-        }
-    });
-
     applyHeatState();
-    if (dev[activeTopicName]) {
-        heatOnClosure();
-    } else {
-        heatOffClosure();
-    }
 }
 
 makePoolHeatController(
     "outdoor",
     "wb-m1w2_69/External Sensor 1",
-    "pool-filtration-ctrl-outdoor/mode",
-    function () {
-        dev["calculated-flow-sensor-POOL FILTR/activated"] = true;
-    },
-    function () {
-        dev["calculated-flow-sensor-POOL FILTR/activated"] = false;
-    }
+    "pool-filtration-ctrl-outdoor/mode"
 );
