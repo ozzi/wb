@@ -1,18 +1,22 @@
 function findTargetTemperature(currentPerformancePreset, presets) {
     var filteredPresets = presets.filter(function(pair) {
-        return pair[0] !== 0 && pair[1] !== 0;
+        return pair[0] !== 0 && pair[1] !== 0 && pair[2] !== 0;
     });
-    
+
+    if (filteredPresets.length === 0) {
+        return null;
+    }
+
     filteredPresets.sort(function(a, b) {
         return a[0] - b[0];
     });
-    
+
     for (var i = 0; i < filteredPresets.length; i++) {
         if (filteredPresets[i][0] >= currentPerformancePreset) {
             return filteredPresets[i];
         }
     }
-    
+
     return filteredPresets[filteredPresets.length - 1];
 }
 
@@ -74,7 +78,7 @@ function makeASICCoolingController(
                 title: "Delta inlet water - outdoor air for auto mode",
                 type: "value",
                 value: 20,
-                readonly: true
+                readonly: false
             },
             use_performance_preset: {
                 title: "tune inlet water by performance preset",
@@ -207,7 +211,7 @@ function makeASICCoolingController(
             modeTopicName
         ],
         then: function (newValue) {
-            log("asyc cooling change mode to " + newValue);
+            log("asic cooling change mode to " + newValue);
             if (newValue == 0) {
                 dryCoolingRunCallback(false);
                 wellCoolingRunCallback(false);
@@ -217,6 +221,12 @@ function makeASICCoolingController(
                 var outdoorTemperature = dev[outdoorTemperatureTopicName];
                 var switchTemperature = dev[switchTemperatureTopicName];
                 var targetTemperature = dev[targetTemperatureTopicName];
+                if (outdoorTemperature === null || outdoorTemperature === undefined ||
+                    switchTemperature === null || switchTemperature === undefined ||
+                    targetTemperature === null || targetTemperature === undefined) {
+                    log("asic cooling mode 1: skipping, topics not ready");
+                    return;
+                }
                 var delta = targetTemperature - outdoorTemperature;
                 if (delta < switchTemperature) {
                     dryCoolingRunCallback(false);
@@ -251,10 +261,16 @@ function makeASICCoolingController(
             if (dev[modeTopicName] != 1) {
                 return;
             }
-            var hysteresis = 0.25;
             var outdoorTemperature = dev[outdoorTemperatureTopicName];
             var switchTemperature = dev[switchTemperatureTopicName];
             var targetTemperature = dev[targetTemperatureTopicName];
+            if (outdoorTemperature === null || outdoorTemperature === undefined ||
+                switchTemperature === null || switchTemperature === undefined ||
+                targetTemperature === null || targetTemperature === undefined) {
+                log("asic cooling switch: skipping, topics not ready");
+                return;
+            }
+            var hysteresis = 0.25;
             var delta = targetTemperature - outdoorTemperature;
             if (delta < (switchTemperature - hysteresis)) {
                 dryCoolingRunCallback(false);
@@ -284,7 +300,9 @@ function makeASICCoolingController(
         then: function () {
             var heatActive = dev[poolHeatActiveTopicName];
             var currentMode = dev[modeTopicName];
-            if (currentMode == 0) {
+
+            // Не трогаем режим, если выключено или пользователь вручную выбрал режим 2/3
+            if (currentMode == 0 || currentMode == 2 || currentMode == 3) {
                 return;
             }
 
@@ -368,7 +386,7 @@ function makeASICCoolingController(
         ],
         then: function () {
             var usePerformancePreset = dev[usePerformancePresetTopicName];
-            if (!usePerformancePreset) { return }
+            if (!usePerformancePreset) { return; }
             var currentPerformancePreset = dev[currentPerformancePresetTopicName];
             var performancePreset1 = dev[performancePreset1TopicName];
             var targetTemperature1 = dev[targetTemperature1TopicName];
@@ -393,6 +411,10 @@ function makeASICCoolingController(
                 [performancePreset5, targetTemperature5, switchTemperature5]
             ];
             var preset = findTargetTemperature(currentPerformancePreset, presets);
+            if (preset === null) {
+                log("asic cooling preset switch: no valid presets configured, skipping");
+                return;
+            }
             dev[targetTemperatureTopicName] = preset[1];
             dev[switchTemperatureTopicName] = preset[2];
         }
