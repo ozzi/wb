@@ -83,7 +83,7 @@ function makePoolHeatController(
         }
     }
 
-    defineRule("mode-changed-" + name, {
+    defineRule("recalculate-" + name, {
         whenChanged: [
             modeTopicName,
             targetTopicName,
