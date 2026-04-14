@@ -62,6 +62,7 @@ function makePoolHeatController(
         var newHeatRequest = oldHeatRequest;
 
         if (!isValidTemperature(currentTemperature)) {
+            log.warning("[pool-heat-ctrl-{}] invalid temperature: {}", name, currentTemperature);
             newHeatRequest = false;
         } else if (mode == 1 && poolFiltrationMode == 1) {
             var targetTemperature = dev[targetTopicName];
@@ -76,6 +77,7 @@ function makePoolHeatController(
         }
 
         if (oldHeatRequest != newHeatRequest) {
+            log.info("[pool-heat-ctrl-{}] heat_request: {} -> {}", name, oldHeatRequest, newHeatRequest);
             dev[heatRequestTopicName] = newHeatRequest;
         }
         if (isValidTemperature(currentTemperature)) {
