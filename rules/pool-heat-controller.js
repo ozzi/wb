@@ -75,20 +75,6 @@ function makePoolHeatController(
         dev[currentTopicName] = currentTemperature;
     }
 
-    defineRule("init-" + name, {
-        asSoonAs: function () {
-            return true;
-        },
-        then: function () {
-            applyHeatState();
-            if (dev[activeTopicName]) {
-                heatOnClosure();
-            } else {
-                heatOffClosure();
-            }
-        }
-    });
-
     defineRule("mode-changed-" + name, {
         whenChanged: [
             modeTopicName,
@@ -114,6 +100,13 @@ function makePoolHeatController(
             }
         }
     });
+
+    applyHeatState();
+    if (dev[activeTopicName]) {
+        heatOnClosure();
+    } else {
+        heatOffClosure();
+    }
 }
 
 makePoolHeatController(
