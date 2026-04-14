@@ -32,7 +32,7 @@ function makePoolHeatController(
             tolerance: {
                 title: "tolerance",
                 type: "value",
-                value: 0,
+                value: 0.5,
                 readonly: false
             },
             active: {
