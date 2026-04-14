@@ -50,13 +50,20 @@ function makePoolHeatController(
     var hysteresisTopicName = deviceName + "/hysteresis";
     var currentTopicName = deviceName + "/current";
 
+    function isValidTemperature(value) {
+        return value !== null && value !== undefined && typeof value === "number" && !isNaN(value);
+    }
+
     function applyHeatState() {
         var mode = dev[modeTopicName];
         var poolFiltrationMode = dev[poolFiltrationModeTopicName];
         var currentTemperature = dev[currentTemperatureTopicName];
         var oldHeatRequest = dev[heatRequestTopicName];
         var newHeatRequest = oldHeatRequest;
-        if (mode == 1 && poolFiltrationMode == 1) {
+
+        if (!isValidTemperature(currentTemperature)) {
+            newHeatRequest = false;
+        } else if (mode == 1 && poolFiltrationMode == 1) {
             var targetTemperature = dev[targetTopicName];
             var hysteresis = dev[hysteresisTopicName];
             if (currentTemperature < (targetTemperature - hysteresis)) {
@@ -67,10 +74,13 @@ function makePoolHeatController(
         } else {
             newHeatRequest = false;
         }
+
         if (oldHeatRequest != newHeatRequest) {
             dev[heatRequestTopicName] = newHeatRequest;
         }
-        dev[currentTopicName] = currentTemperature;
+        if (isValidTemperature(currentTemperature)) {
+            dev[currentTopicName] = currentTemperature;
+        }
     }
 
     defineRule("mode-changed-" + name, {
