@@ -6,12 +6,12 @@ function makePoolHeatController(
     var deviceName = "pool-heat-ctrl-" + name;
     var defaultHysteresis = 0.5;
 
-    var STATUS_OFF               = 0;
-    var STATUS_STANDBY           = 1;
-    var STATUS_IDLE              = 2;
-    var STATUS_HEATING           = 3;
-    var STATUS_ERROR_SENSOR      = 4;
-    var STATUS_ERROR_FILTRATION  = 5;
+    var STATUS_OFF                      = 0;
+    var STATUS_STANDBY                  = 1;
+    var STATUS_IDLE                     = 2;
+    var STATUS_HEATING                  = 3;
+    var STATUS_ERROR_SENSOR             = 4;
+    var STATUS_ERROR_NO_FILTRATION_DATA = 5;
 
     defineVirtualDevice(deviceName, {
         title: "Pool Heat Controller - " + name,
@@ -56,12 +56,12 @@ function makePoolHeatController(
                 value: STATUS_OFF,
                 readonly: true,
                 enum: {
-                    0: {en: "Off",                ru: "Выключено"},
-                    1: {en: "Standby",            ru: "Ожидание фильтрации"},
-                    2: {en: "Idle",               ru: "Температура достигнута"},
-                    3: {en: "Heating",            ru: "Нагрев"},
-                    4: {en: "Error: sensor",      ru: "Ошибка датчика"},
-                    5: {en: "Error: filtration",  ru: "Ошибка фильтрации"}
+                    0: {en: "Off",                        ru: "Выключено"},
+                    1: {en: "Standby",                    ru: "Ожидание фильтрации"},
+                    2: {en: "Idle",                       ru: "Температура достигнута"},
+                    3: {en: "Heating",                    ru: "Нагрев"},
+                    4: {en: "Error: sensor",              ru: "Ошибка датчика"},
+                    5: {en: "Error: no filtration data",  ru: "Ошибка: нет данных фильтрации"}
                 }
             }
         }
@@ -105,7 +105,7 @@ function makePoolHeatController(
         } else if (!isValidFiltrationMode(poolFiltrationMode)) {
             log.warning("[pool-heat-ctrl-{}] filtration mode unavailable", name);
             newHeatRequest = false;
-            newStatus = STATUS_ERROR_FILTRATION;
+            newStatus = STATUS_ERROR_NO_FILTRATION_DATA;
         } else if (mode !== 1) {
             newHeatRequest = false;
             newStatus = STATUS_OFF;
