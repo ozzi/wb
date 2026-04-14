@@ -28,7 +28,7 @@ function performPOST(
   apikey,
   callback
 ) {
-  var command = 'curl -X POST {}{} -H \'x-api-key: {}\''.format(
+  var command = 'curl -s --connect-timeout 2 --max-time 5 -X POST {}{} -H \'x-api-key: {}\''.format(
     host,
     endpoint,
     apikey
@@ -55,7 +55,7 @@ function performPayloadPOST(
   payload,
   callback
 ) {
-  var command = 'curl -X POST {}{} -H \'x-api-key: {}\' -H \'Content-Type: application/json\' -d \'{}\''.format(
+  var command = 'curl -s --connect-timeout 2 --max-time 5 -X POST {}{} -H \'x-api-key: {}\' -H \'Content-Type: application/json\' -d \'{}\''.format(
     host,
     endpoint,
     apikey,
@@ -158,6 +158,7 @@ function processSensorsTemperatures(data, excludedLocIds) {
   }
   return result;
 }
+
 function processWaterTemperatures(data) {
   var result = {};
   if (!data || !Array.isArray(data)) return result;
@@ -183,14 +184,20 @@ function getSummary(host, callback) {
     "/api/v1/summary",
     function (serverResponse) {
       if (serverResponse == null) {
-        callback("unavailable", 0, []);
+        callback("unavailable", 0);
       } else {
-        var response = JSON.parse(serverResponse);
+        var response;
+        try {
+          response = JSON.parse(serverResponse);
+        } catch (e) {
+          log("getSummary: JSON.parse failed: {}", e);
+          callback("unavailable", 0);
+          return;
+        }
         var state = response["miner"]["miner_status"]["miner_state"];
         var powerStr = response["miner"]["power_consumption"];
         var power = parseInt(powerStr);
-        var temps = processWaterTemperatures(response["miner"]["chains"]);
-        callback(state, power, temps);
+        callback(state, power);
       }
     }
   );
@@ -204,7 +211,14 @@ function getPerfSummary(host, callback) {
       if (serverResponse == null) {
         callback(0);
       } else {
-        var response = JSON.parse(serverResponse);
+        var response;
+        try {
+          response = JSON.parse(serverResponse);
+        } catch (e) {
+          log("getPerfSummary: JSON.parse failed: {}", e);
+          callback(0);
+          return;
+        }
         var presetStr = response["current_preset"]["name"];
         var preset = parseInt(presetStr);
         callback(preset);
@@ -221,7 +235,14 @@ function getChains(host, callback) {
       if (serverResponse == null) {
         callback([]);
       } else {
-        var response = JSON.parse(serverResponse);
+        var response;
+        try {
+          response = JSON.parse(serverResponse);
+        } catch (e) {
+          log("getChains: JSON.parse failed: {}", e);
+          callback([]);
+          return;
+        }
         var temps = processSensorsTemperatures(response, [41, 50]);
         callback(temps);
       }
@@ -243,6 +264,19 @@ function isPeakRate() {
 
   // Пиковый тариф с 07:00 до 10:00 и с 17:00 до 21:00
   return (currentHour >= 7 && currentHour < 10) || (currentHour >= 17 && currentHour < 21);
+}
+
+function applySchedulePreset(deviceName, scheduleModeTopicName, selectedPresetTopicName) {
+  var scheduleMode = dev[scheduleModeTopicName];
+  if (scheduleMode == "peak-offpeak-night") {
+    if (isNightRate()) {
+      dev[selectedPresetTopicName] = "performance";
+    } else if (isPeakRate()) {
+      dev[selectedPresetTopicName] = "lowpower";
+    } else {
+      dev[selectedPresetTopicName] = "optimal";
+    }
+  }
 }
 
 function buildVNISHDevice(
@@ -463,6 +497,7 @@ function buildVNISHDevice(
   var scheduleModeTopicName = deviceName + "/schedule_mode";
 
   var intervalId = null;
+  var intervalRunning = false;
 
   defineRule("vnish-enabled-automation-" + deviceName, {
     whenChanged: [
@@ -471,38 +506,27 @@ function buildVNISHDevice(
     then: function (newValue) {
       if (intervalId != null) {
         clearInterval(intervalId);
+        intervalId = null;
+        intervalRunning = false;
       }
       if (newValue) {
+        // Инициализация пресета по расписанию при старте
+        applySchedulePreset(deviceName, scheduleModeTopicName, selectedPresetTopicName);
+
         intervalId = setInterval(
           function () {
+            if (intervalRunning) return;
+            intervalRunning = true;
+
             getSummary(
               hostName,
-              function (newState, newPower, newWaterTemps) {
+              function (newState, newPower) {
                 if (newState != dev[stateTopicName]) {
                   dev[stateTopicName] = newState;
                 }
                 if (newPower != dev[powerTopicName]) {
                   dev[powerTopicName] = newPower;
                 }
-                var chainIds = [1, 2, 3];
-
-                chainIds.forEach(function (id) {
-                  var topicInlet = deviceName + "/pcb_" + id + "_inlet";
-                  var topicOutlet = deviceName + "/pcb_" + id + "_outlet";
-                  if (newWaterTemps.hasOwnProperty(id)) {
-                    var data = newWaterTemps[id];
-                    if (data.inlet !== undefined && data.inlet !== null) {
-                      if (dev[topicInlet] !== data.inlet) {
-                        dev[topicInlet] = data.inlet;
-                      }
-                    }
-                    if (data.outlet !== undefined && data.outlet !== null) {
-                      if (dev[topicOutlet] !== data.outlet) {
-                        dev[topicOutlet] = data.outlet;
-                      }
-                    }
-                  }
-                });
               }
             );
             getPerfSummary(
@@ -535,6 +559,7 @@ function buildVNISHDevice(
                     dev[topicOutlet] = -1;
                   }
                 });
+                intervalRunning = false;
               }
             );
           },
@@ -601,26 +626,17 @@ function buildVNISHDevice(
     }
   });
 
-  defineRule("vnish-schedule-mode-changed" + deviceName, {
+  defineRule("vnish-schedule-mode-changed-" + deviceName, {
     whenChanged: [
       scheduleModeTopicName
     ],
     then: function () {
-      var scheduleMode = dev[scheduleModeTopicName];
-      if (scheduleMode == "peak-offpeak-night") {
-        if (isNightRate()) {
-          dev[selectedPresetTopicName] = "performance";
-        } else if (isPeakRate()) {
-          dev[selectedPresetTopicName] = "lowpower";
-        } else {
-          dev[selectedPresetTopicName] = "optimal";
-        }
-      }
+      applySchedulePreset(deviceName, scheduleModeTopicName, selectedPresetTopicName);
     }
   });
 
-  defineRule("vnish-turn-night-preset" + deviceName, {
-    when: cron("00 00 23 * *"),
+  defineRule("vnish-turn-night-preset-" + deviceName, {
+    when: cron("0 0 23 * * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
       if (scheduleMode == "peak-offpeak-night") {
@@ -629,8 +645,8 @@ function buildVNISHDevice(
     }
   });
 
-  defineRule("vnish-turn-peak-preset" + deviceName, {
-    when: cron("00 00 07 * *"),
+  defineRule("vnish-turn-peak-preset-" + deviceName, {
+    when: cron("0 0 7 * * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
       if (scheduleMode == "peak-offpeak-night") {
@@ -639,8 +655,8 @@ function buildVNISHDevice(
     }
   });
 
-  defineRule("vnish-turn-offpeak-preset" + deviceName, {
-    when: cron("00 00 10 * *"),
+  defineRule("vnish-turn-offpeak-preset-" + deviceName, {
+    when: cron("0 0 10 * * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
       if (scheduleMode == "peak-offpeak-night") {
@@ -649,8 +665,8 @@ function buildVNISHDevice(
     }
   });
 
-  defineRule("vnish-turn-peak2-preset" + deviceName, {
-    when: cron("00 00 17 * *"),
+  defineRule("vnish-turn-peak2-preset-" + deviceName, {
+    when: cron("0 0 17 * * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
       if (scheduleMode == "peak-offpeak-night") {
@@ -659,8 +675,8 @@ function buildVNISHDevice(
     }
   });
 
-  defineRule("vnish-turn-offpeak2-preset" + deviceName, {
-    when: cron("00 00 21 * *"),
+  defineRule("vnish-turn-offpeak2-preset-" + deviceName, {
+    when: cron("0 0 21 * * *"),
     then: function () {
       var scheduleMode = dev[scheduleModeTopicName];
       if (scheduleMode == "peak-offpeak-night") {
