@@ -411,8 +411,12 @@ function makePoolFiltrationController(
         if (last_update > 0 && pumpOn) {
             var hours = (now - last_update) / (1000 * 3600);
             var pumpFlow = dev[pumpFlowRateTopicName];
-            // pumpFlow в м3/ч, переводим в литры: * 1000
-            totalVolume += pumpFlow * 1000 * hours;
+            if (!pumpFlow || pumpFlow <= 0) {
+                log.warning("[pool-filtration-ctrl-{}] pumpFlow is zero or invalid, skipping volume accumulation", name);
+            } else {
+                // pumpFlow в м3/ч, переводим в литры: * 1000
+                totalVolume += pumpFlow * 1000 * hours;
+            }
         }
         last_update = now;
         dev[totalVolumeTopicName] = totalVolume;
@@ -427,6 +431,7 @@ function makePoolFiltrationController(
         when: cron("00 00 00 * *"),
         then: function () {
             dev[totalVolumeTopicName] = 0;
+            dev[dailyCyclesTopicName] = 0;
         }
     });
 
@@ -485,6 +490,10 @@ function makePoolFiltrationController(
             for (var i = 0; i < timeWindows.length; i++) {
                 var timeWindow = timeWindows[i].split('-');
                 if (!timeWindow[0] || !timeWindow[1]) { continue; }
+                if (!isValidTimeStr(timeWindow[0]) || !isValidTimeStr(timeWindow[1])) {
+                    log.warning("[pool-filtration-ctrl-{}] invalid time window: '{}'", name, timeWindows[i]);
+                    continue;
+                }
                 var startParts = timeWindow[0].split(':');
                 var endParts = timeWindow[1].split(':');
 
