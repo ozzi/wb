@@ -161,7 +161,7 @@ function makePoolFiltrationController(
                 readonly: false,
                 value: 13
             },
-            set_daily_cycles: {
+            target_daily_cycles: {
                 type: "range",
                 value: 1,
                 max: 8,
@@ -170,6 +170,7 @@ function makePoolFiltrationController(
             },
             work_hours_per_day: {
                 type: "value",
+                unit: "ч",
                 readonly: true,
                 value: 1
             },
@@ -201,15 +202,9 @@ function makePoolFiltrationController(
                 min: 0,
                 readonly: false,
             },
-            calc_pool_volume_filtration_time: {
+            calc_turnover_time: {
                 type: "value",
-                unit: "м3/ч",
-                readonly: true,
-                value: 0
-            },
-            calc_filtration_speed: {
-                type: "value",
-                unit: "м3/ч/м2",
+                unit: "ч",
                 readonly: true,
                 value: 0
             },
@@ -270,7 +265,7 @@ function makePoolFiltrationController(
     var poolVolumeTopicName = deviceName + "/pool_volume";
     var modeTopicName = deviceName + "/mode";
     var pumpFlowRateTopicName = deviceName + "/pump_flow_rate";
-    var setDailyCyclesTopicName = deviceName + "/set_daily_cycles";
+    var targetDailyCyclesTopicName = deviceName + "/target_daily_cycles";
     var workHoursPerDayTopicName = deviceName + "/work_hours_per_day";
     var dayWeightTopicName = deviceName + "/day_weight";
     var nightWeightTopicName = deviceName + "/night_weight";
@@ -284,15 +279,14 @@ function makePoolFiltrationController(
     var sunriseTimeTopicName = deviceName + "/sunrise_time";
     var sunsetTimeTopicName = deviceName + "/sunset_time";
 
-    var calcFiltrationRateTopicName = deviceName + "/calc_pool_volume_filtration_time";
-    var calcFiltrationSpeedTopicName = deviceName + "/calc_filtration_speed";
+    var calcTurnoverTimeTopicName = deviceName + "/calc_turnover_time";
 
 
     defineRule("pool-cycles-calc-" + name, {
         whenChanged: [
             poolVolumeTopicName,
             pumpFlowRateTopicName,
-            setDailyCyclesTopicName,
+            targetDailyCyclesTopicName,
             dayWeightTopicName,
             nightWeightTopicName,
             morningWeightTopicName,
@@ -315,7 +309,7 @@ function makePoolFiltrationController(
                 return;
             }
 
-            var dailyCycles = dev[setDailyCyclesTopicName];
+            var dailyCycles = dev[targetDailyCyclesTopicName];
             var workHoursPerDay = poolVolume / 1000 * dailyCycles / pumpFlow;
             // Обрезаем до 24 часов ДО распределения по весам
             if (workHoursPerDay > 24) {
@@ -367,9 +361,7 @@ function makePoolFiltrationController(
             dev[workHoursPerDayTopicName] = workHoursPerDay;
             dev[scheduleTopicName] = formattedTimes;
 
-            dev[calcFiltrationRateTopicName] = poolVolume / 1000 / pumpFlow;
-            var dia = filterDiameter / 1000;
-            dev[calcFiltrationSpeedTopicName] = pumpFlow / (Math.PI * Math.pow(dia / 2, 2));
+            dev[calcTurnoverTimeTopicName] = poolVolume / 1000 / pumpFlow;
         }
     });
 
