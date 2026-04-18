@@ -437,9 +437,9 @@ function makePoolFiltrationController(
             var isInWindow = false;
 
             for (var i = 0; i < timeWindows.length; i++) {
-                var window = timeWindows[i].split('-');
-                var startParts = window[0].split(':');
-                var endParts = window[1].split(':');
+                var timeWindow = timeWindows[i].split('-');
+                var startParts = timeWindow[0].split(':');
+                var endParts = timeWindow[1].split(':');
 
                 var startHours = parseInt(startParts[0], 10);
                 var startMinutes = parseInt(startParts[1], 10);
