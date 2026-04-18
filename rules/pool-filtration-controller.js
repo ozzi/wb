@@ -155,7 +155,7 @@ function makePoolFiltrationController(
                 type: "range",
                 value: 1,
                 max: 8,
-                min: 2,
+                min: 1,
                 readonly: false,
             },
             work_hours_per_day: {
