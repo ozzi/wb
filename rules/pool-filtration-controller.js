@@ -32,30 +32,30 @@ function optimizedSchedule(windows) {
     var result = [null, null, null, null];
     if (windows[0] > 0) {
         var morningTime = toMinutes("09:00");
-        var start = Math.round(morningTime - windows[0]/2);
-        var end = Math.round(morningTime + windows[0]/2);
-        result[0] = [toTimeStr(start), toTimeStr(end)];
+        var morningStart = Math.round(morningTime - windows[0]/2);
+        var morningEnd = Math.round(morningTime + windows[0]/2);
+        result[0] = [toTimeStr(morningStart), toTimeStr(morningEnd)];
     }
 
     if (windows[1] > 0) {
         var dayTime = toMinutes("15:00");
-        var start = Math.round(dayTime - windows[1]/2);
-        var end = Math.round(dayTime + windows[1]/2);
-        result[1] = [toTimeStr(start), toTimeStr(end)];
+        var dayStart = Math.round(dayTime - windows[1]/2);
+        var dayEnd = Math.round(dayTime + windows[1]/2);
+        result[1] = [toTimeStr(dayStart), toTimeStr(dayEnd)];
     }
 
     if (windows[2] > 0) {
         var eveningTime = toMinutes("21:00");
-        var start = Math.round(eveningTime - windows[2]/2);
-        var end = Math.round(eveningTime + windows[2]/2);
-        result[2] = [toTimeStr(start), toTimeStr(end)];
+        var eveningStart = Math.round(eveningTime - windows[2]/2);
+        var eveningEnd = Math.round(eveningTime + windows[2]/2);
+        result[2] = [toTimeStr(eveningStart), toTimeStr(eveningEnd)];
     }
 
     if (windows[3] > 0) {
         var nightTime = toMinutes("03:00");
-        var start = Math.round(nightTime - windows[3]/2);
-        var end = Math.round(nightTime + windows[3]/2);
-        result[3] = [toTimeStr(start), toTimeStr(end)];
+        var nightStart = Math.round(nightTime - windows[3]/2);
+        var nightEnd = Math.round(nightTime + windows[3]/2);
+        result[3] = [toTimeStr(nightStart), toTimeStr(nightEnd)];
     }
     return result;
 }
@@ -67,24 +67,24 @@ function schedule(sunriseStr, sunsetStr, windows) {
 
     // Утреннее окно (0): начинается сразу после рассвета
     if (windows[0] > 0) {
-        var start = sunRise;
-        var end = start + windows[0];
-        result[0] = [toTimeStr(start), toTimeStr(end)];
+        var morningStart = sunRise;
+        var morningEnd = morningStart + windows[0];
+        result[0] = [toTimeStr(morningStart), toTimeStr(morningEnd)];
     }
 
     // Дневное окно (1): середина между рассветом и закатом
     if (windows[1] > 0) {
         var midday = sunRise + (sunSet - sunRise) / 2;
-        var start = Math.round(midday - windows[1] / 2);
-        var end = Math.round(midday + windows[1] / 2);
-        result[1] = [toTimeStr(start), toTimeStr(end)];
+        var dayStart = Math.round(midday - windows[1] / 2);
+        var dayEnd = Math.round(midday + windows[1] / 2);
+        result[1] = [toTimeStr(dayStart), toTimeStr(dayEnd)];
     }
 
     // Вечернее окно (2): завершается перед закатом
     if (windows[2] > 0) {
-        var end = sunSet;
-        var start = end - windows[2];
-        result[2] = [toTimeStr(start), toTimeStr(end)];
+        var eveningEnd = sunSet;
+        var eveningStart = eveningEnd - windows[2];
+        result[2] = [toTimeStr(eveningStart), toTimeStr(eveningEnd)];
     }
 
     // Ночное окно (3): середина между закатом и рассветом
@@ -92,9 +92,9 @@ function schedule(sunriseStr, sunsetStr, windows) {
         // Рассвет следующего дня (sunRise + 24 часа)
         var nextSunrise = sunRise + 1440;
         var nightMid = sunSet + (nextSunrise - sunSet) / 2;
-        var start = Math.round(nightMid - windows[3] / 2);
-        var end = Math.round(nightMid + windows[3] / 2);
-        result[3] = [toTimeStr(start), toTimeStr(end)];
+        var nightStart = Math.round(nightMid - windows[3] / 2);
+        var nightEnd = Math.round(nightMid + windows[3] / 2);
+        result[3] = [toTimeStr(nightStart), toTimeStr(nightEnd)];
     }
 
     return result;
@@ -294,6 +294,10 @@ function makePoolFiltrationController(
         then: function (newValue) {
             var poolVolume = dev[poolVolumeTopicName];
             var pumpFlow = dev[pumpFlowRateTopicName];
+            if (pumpFlow === 0) {
+                log.warning("[pool-filtration-ctrl-{}] pumpFlow is zero", name);
+                return;
+            }
             var dailyCycles = dev[setDailyCyclesTopicName];
             var workHoursPerDay = poolVolume / 1000 * dailyCycles / pumpFlow;
             if (workHoursPerDay > 24) {
@@ -304,6 +308,11 @@ function makePoolFiltrationController(
             var morningWeight = dev[morningWeightTopicName];
             var eveningWeight = dev[eveningWeightTopicName];
             var totalWeight = dayWeight + nightWeight + morningWeight + eveningWeight;
+            if (totalWeight === 0) {
+                dev[scheduleTopicName] = "";
+                dev[workHoursPerDayTopicName] = 0;
+                return;
+            }
             var dayHours = workHoursPerDay * dayWeight / totalWeight;
             var nightHours = workHoursPerDay * nightWeight / totalWeight;
             var morningHours = workHoursPerDay * morningWeight / totalWeight;
@@ -361,7 +370,7 @@ function makePoolFiltrationController(
 
     var last_update = 0;
 
-    var daylyCyclesCalc = function () {
+    var dailyCyclesCalc = function () {
         var newValue = dev[flowSensorTopicName];
         var now = Date.now();
         var totalVolume = dev[totalVolumeTopicName];
@@ -376,7 +385,7 @@ function makePoolFiltrationController(
         dev[dailyCyclesTopicName] = cycles;
     };
 
-    setInterval(daylyCyclesCalc, timeframe);
+    setInterval(dailyCyclesCalc, timeframe);
 
     defineRule("reset-daily-stats-" + name, {
         when: cron("00 00 00 * *"),
@@ -422,9 +431,10 @@ function makePoolFiltrationController(
             var scheduleMode = dev[scheduleModeTopicName];
             if (scheduleMode != 1) { return; }
             var mode = dev[modeTopicName];
-            if (mode == 2) { return }
+            if (mode == 2) { return; }
 
             var timeWindowsStr = dev[scheduleTopicName];
+            if (!timeWindowsStr || timeWindowsStr === "") { return; }
             var timeWindows = timeWindowsStr.split(',');
 
             // Получаем текущее время
@@ -438,6 +448,7 @@ function makePoolFiltrationController(
 
             for (var i = 0; i < timeWindows.length; i++) {
                 var timeWindow = timeWindows[i].split('-');
+                if (!timeWindow[0] || !timeWindow[1]) { continue; }
                 var startParts = timeWindow[0].split(':');
                 var endParts = timeWindow[1].split(':');
 
