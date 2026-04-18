@@ -475,7 +475,7 @@ function makePoolFiltrationController(
 }
 
 makePoolFiltrationController("outdoor",
-    "wb-mr6cu_91/K2",
+    "wb-mr6cu_91/K1",
     "calculated-flow-sensor-POOL FILTR/flow_rate",
     5000
 );
