@@ -114,7 +114,6 @@ function schedule(sunriseStr, sunsetStr, windows) {
 function makePoolFiltrationController(
     name,
     pumpSwitchTopicName,
-    flowSensorTopicName,
     timeframe
 ) {
     var deviceName = "pool-filtration-ctrl-" + name;
@@ -374,32 +373,31 @@ function makePoolFiltrationController(
         }
     });
 
-    defineRule("pool-flow-rate-calc-" + name, {
+    defineRule("filtration-rate-calc-" + name, {
         whenChanged: [
-            flowSensorTopicName
+            pumpSwitchTopicName,
+            pumpFlowRateTopicName
         ],
-        then: function (newValue) {
-            if (newValue < 0) {
-                log.warning("[pool-filtration-ctrl-{}] flow sensor value is negative: {}", name, newValue);
-                return;
-            }
-            var rateInM3H = newValue * 60 / 1000;
-            dev[filtrationRateTopicName] = rateInM3H;
+        then: function () {
+            var pumpOn = dev[pumpSwitchTopicName];
+            var pumpFlow = dev[pumpFlowRateTopicName];
+            dev[filtrationRateTopicName] = pumpOn ? pumpFlow : 0;
         }
     });
 
     defineRule("filtration-speed-calc-" + name, {
         whenChanged: [
-            filtrationRateTopicName
+            filtrationRateTopicName,
+            filterDiameterTopicName
         ],
-        then: function (newValue) {
+        then: function () {
             var dia = dev[filterDiameterTopicName] / 1000;
             if (dia <= 0) {
                 log.warning("[pool-filtration-ctrl-{}] filter_diameter is zero or negative", name);
                 return;
             }
             var filterArea = Math.PI * Math.pow(dia / 2, 2);
-            var speed = newValue / filterArea;
+            var speed = dev[filtrationRateTopicName] / filterArea;
             dev[filtrationSpeedTopicName] = speed;
         }
     });
@@ -407,12 +405,14 @@ function makePoolFiltrationController(
     var last_update = 0;
 
     var dailyCyclesCalc = function () {
-        var newValue = dev[flowSensorTopicName];
         var now = Date.now();
         var totalVolume = dev[totalVolumeTopicName];
-        if (last_update > 0) {
+        var pumpOn = dev[pumpSwitchTopicName];
+        if (last_update > 0 && pumpOn) {
             var hours = (now - last_update) / (1000 * 3600);
-            totalVolume += newValue * 60 * hours;
+            var pumpFlow = dev[pumpFlowRateTopicName];
+            // pumpFlow в м3/ч, переводим в литры: * 1000
+            totalVolume += pumpFlow * 1000 * hours;
         }
         last_update = now;
         dev[totalVolumeTopicName] = totalVolume;
@@ -523,6 +523,5 @@ function makePoolFiltrationController(
 
 makePoolFiltrationController("outdoor",
     "wb-mr6cu_91/K1",
-    "calculated-flow-sensor-POOL FILTR/flow_rate",
     5000
 );
