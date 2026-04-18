@@ -28,6 +28,17 @@ function toTimeStr(totalMinutes) {
     return (hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes;
 }
 
+// Проверка формата времени HH:MM
+function isValidTimeStr(timeStr) {
+    if (typeof timeStr !== 'string') { return false; }
+    var re = /^\d{2}:\d{2}$/;
+    if (!re.test(timeStr)) { return false; }
+    var parts = timeStr.split(':');
+    var hours = parseInt(parts[0], 10);
+    var minutes = parseInt(parts[1], 10);
+    return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+}
+
 function optimizedSchedule(windows) {
     var result = [null, null, null, null];
     if (windows[0] > 0) {
@@ -298,11 +309,20 @@ function makePoolFiltrationController(
                 log.warning("[pool-filtration-ctrl-{}] pumpFlow is zero", name);
                 return;
             }
+
+            var filterDiameter = dev[filterDiameterTopicName];
+            if (filterDiameter <= 0) {
+                log.warning("[pool-filtration-ctrl-{}] filter_diameter is zero or negative", name);
+                return;
+            }
+
             var dailyCycles = dev[setDailyCyclesTopicName];
             var workHoursPerDay = poolVolume / 1000 * dailyCycles / pumpFlow;
+            // Обрезаем до 24 часов ДО распределения по весам
             if (workHoursPerDay > 24) {
                 workHoursPerDay = 24;
             }
+
             var dayWeight = dev[dayWeightTopicName];
             var nightWeight = dev[nightWeightTopicName];
             var morningWeight = dev[morningWeightTopicName];
@@ -317,13 +337,21 @@ function makePoolFiltrationController(
             var nightHours = workHoursPerDay * nightWeight / totalWeight;
             var morningHours = workHoursPerDay * morningWeight / totalWeight;
             var eveningHours = workHoursPerDay * eveningWeight / totalWeight;
-            var sunriseTime = dev[sunriseTimeTopicName];
-            var sunsetTime = dev[sunsetTimeTopicName];
             var scheduleType = dev[scheduleTypeTopicName];
 
             var times = [];
 
             if (scheduleType == 0) {
+                var sunriseTime = dev[sunriseTimeTopicName];
+                var sunsetTime = dev[sunsetTimeTopicName];
+                if (!isValidTimeStr(sunriseTime)) {
+                    log.warning("[pool-filtration-ctrl-{}] invalid sunrise_time: '{}'", name, sunriseTime);
+                    return;
+                }
+                if (!isValidTimeStr(sunsetTime)) {
+                    log.warning("[pool-filtration-ctrl-{}] invalid sunset_time: '{}'", name, sunsetTime);
+                    return;
+                }
                 times = schedule(
                     sunriseTime,
                     sunsetTime,
@@ -341,7 +369,7 @@ function makePoolFiltrationController(
             dev[scheduleTopicName] = formattedTimes;
 
             dev[calcFiltrationRateTopicName] = poolVolume / 1000 / pumpFlow;
-            var dia = dev[filterDiameterTopicName] / 1000;
+            var dia = filterDiameter / 1000;
             dev[calcFiltrationSpeedTopicName] = pumpFlow / (Math.PI * Math.pow(dia / 2, 2));
         }
     });
@@ -351,6 +379,10 @@ function makePoolFiltrationController(
             flowSensorTopicName
         ],
         then: function (newValue) {
+            if (newValue < 0) {
+                log.warning("[pool-filtration-ctrl-{}] flow sensor value is negative: {}", name, newValue);
+                return;
+            }
             var rateInM3H = newValue * 60 / 1000;
             dev[filtrationRateTopicName] = rateInM3H;
         }
@@ -362,6 +394,10 @@ function makePoolFiltrationController(
         ],
         then: function (newValue) {
             var dia = dev[filterDiameterTopicName] / 1000;
+            if (dia <= 0) {
+                log.warning("[pool-filtration-ctrl-{}] filter_diameter is zero or negative", name);
+                return;
+            }
             var filterArea = Math.PI * Math.pow(dia / 2, 2);
             var speed = newValue / filterArea;
             dev[filtrationSpeedTopicName] = speed;
