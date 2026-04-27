@@ -563,5 +563,5 @@ function makePoolFiltrationController(
 makePoolFiltrationController("outdoor",
     "wb-mr6cu_91/K1",
     5000,
-    "wb-mcm8_XX/Input 3"
+    "wb-mcm8_238/Input 3"
 );
