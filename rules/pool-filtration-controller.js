@@ -114,7 +114,8 @@ function schedule(sunriseStr, sunsetStr, windows) {
 function makePoolFiltrationController(
     name,
     pumpSwitchTopicName,
-    timeframe
+    timeframe,
+    buttonTopicName
 ) {
     var deviceName = "pool-filtration-ctrl-" + name;
     defineVirtualDevice(deviceName, {
@@ -528,9 +529,38 @@ function makePoolFiltrationController(
             }
         }
     });
+
+    if (buttonTopicName) {
+        defineRule("backwash-long-press-" + name, {
+            whenChanged: [buttonTopicName + "/Long Press Counter"],
+            then: function () {
+                var mode = dev[modeTopicName];
+                if (mode == 2) {
+                    dev[modeTopicName] = 1;
+                } else {
+                    dev[modeTopicName] = 2;
+                }
+            }
+        });
+
+        defineRule("backwash-single-press-" + name, {
+            whenChanged: [buttonTopicName + "/Single Press Counter"],
+            then: function () {
+                var mode = dev[modeTopicName];
+                if (mode == 2) {
+                    dev[pumpSwitchTopicName] = !dev[pumpSwitchTopicName];
+                } else if (mode == 1) {
+                    dev[modeTopicName] = 0;
+                } else if (mode == 0) {
+                    dev[modeTopicName] = 1;
+                }
+            }
+        });
+    }
 }
 
 makePoolFiltrationController("outdoor",
     "wb-mr6cu_91/K1",
-    5000
+    5000,
+    "wb-mcm8_XX/Input 3"
 );
