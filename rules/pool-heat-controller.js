@@ -312,7 +312,14 @@ function makePoolHeatController(
         }
     });
 
-    applyHeatState();
+    // При старте: если фильтрация уже активна — сразу считаем датчики валидными
+    var initialFiltrationMode = dev[poolFiltrationModeTopicName];
+    if (isFiltrationActive(initialFiltrationMode)) {
+        log.info("[pool-heat-ctrl-{}] filtration already active on start, temperatures_valid = true", name);
+        applyTemperaturesValid(true);
+    } else {
+        applyHeatState();
+    }
 }
 
 makePoolHeatController(
