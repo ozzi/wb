@@ -45,6 +45,22 @@ function makePoolHeatController(
                 value: 20,
                 readonly: true
             },
+            temperature_delta: {
+                title: "temperature delta (outlet - inlet)",
+                type: "value",
+                value: 0,
+                readonly: true
+            },
+            outlet_offset: {
+                title: "outlet offset (calibration)",
+                type: "value",
+                value: 0,
+                readonly: true
+            },
+            calibrate: {
+                title: "calibrate (set delta to zero)",
+                type: "pushbutton"
+            },
             hysteresis: {
                 title: "hysteresis",
                 type: "value",
@@ -80,6 +96,9 @@ function makePoolHeatController(
     var hysteresisTopicName = deviceName + "/hysteresis";
     var inletTopicName = deviceName + "/inlet_temperature";
     var outletTopicName = deviceName + "/outlet_temperature";
+    var deltaTopicName = deviceName + "/temperature_delta";
+    var outletOffsetTopicName = deviceName + "/outlet_offset";
+    var calibrateTopicName = deviceName + "/calibrate";
     var statusTopicName = deviceName + "/status";
 
     function isValidTemperature(value) {
@@ -103,6 +122,7 @@ function makePoolHeatController(
         var poolFiltrationMode = dev[poolFiltrationModeTopicName];
         var inletTemperature = dev[inletTemperatureTopicName];
         var outletTemperature = dev[outletTemperatureTopicName];
+        var outletOffset = dev[outletOffsetTopicName];
         var oldHeatRequest = dev[heatRequestTopicName];
         var newHeatRequest = oldHeatRequest;
         var newStatus = dev[statusTopicName];
@@ -149,6 +169,9 @@ function makePoolHeatController(
         }
         if (isValidTemperature(outletTemperature)) {
             dev[outletTopicName] = outletTemperature;
+            if (isValidTemperature(inletTemperature)) {
+                dev[deltaTopicName] = (outletTemperature + outletOffset) - inletTemperature;
+            }
         }
     }
 
@@ -163,6 +186,22 @@ function makePoolHeatController(
         ],
         then: function () {
             applyHeatState();
+        }
+    });
+
+    defineRule("calibrate-" + name, {
+        whenChanged: [calibrateTopicName],
+        then: function () {
+            var inletTemperature = dev[inletTemperatureTopicName];
+            var outletTemperature = dev[outletTemperatureTopicName];
+            if (!isValidTemperature(inletTemperature) || !isValidTemperature(outletTemperature)) {
+                log.warning("[pool-heat-ctrl-{}] calibration skipped: invalid sensor data", name);
+                return;
+            }
+            var newOffset = inletTemperature - outletTemperature;
+            log.info("[pool-heat-ctrl-{}] calibration: outlet_offset set to {}", name, newOffset);
+            dev[outletOffsetTopicName] = newOffset;
+            dev[deltaTopicName] = 0;
         }
     });
 
