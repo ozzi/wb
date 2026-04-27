@@ -1,6 +1,7 @@
 function makePoolHeatController(
     name,
-    currentTemperatureTopicName,
+    inletTemperatureTopicName,
+    outletTemperatureTopicName,
     poolFiltrationModeTopicName
 ) {
     var deviceName = "pool-heat-ctrl-" + name;
@@ -32,8 +33,14 @@ function makePoolHeatController(
                 value: 28,
                 readonly: false
             },
-            current: {
-                title: "current temperature",
+            inlet_temperature: {
+                title: "inlet temperature",
+                type: "value",
+                value: 20,
+                readonly: true
+            },
+            outlet_temperature: {
+                title: "outlet temperature",
                 type: "value",
                 value: 20,
                 readonly: true
@@ -71,7 +78,8 @@ function makePoolHeatController(
     var targetTopicName = deviceName + "/target";
     var heatRequestTopicName = deviceName + "/heat_request";
     var hysteresisTopicName = deviceName + "/hysteresis";
-    var currentTopicName = deviceName + "/current";
+    var inletTopicName = deviceName + "/inlet_temperature";
+    var outletTopicName = deviceName + "/outlet_temperature";
     var statusTopicName = deviceName + "/status";
 
     function isValidTemperature(value) {
@@ -93,13 +101,14 @@ function makePoolHeatController(
     function applyHeatState() {
         var mode = dev[modeTopicName];
         var poolFiltrationMode = dev[poolFiltrationModeTopicName];
-        var currentTemperature = dev[currentTemperatureTopicName];
+        var inletTemperature = dev[inletTemperatureTopicName];
+        var outletTemperature = dev[outletTemperatureTopicName];
         var oldHeatRequest = dev[heatRequestTopicName];
         var newHeatRequest = oldHeatRequest;
         var newStatus = dev[statusTopicName];
 
-        if (!isValidTemperature(currentTemperature)) {
-            log.warning("[pool-heat-ctrl-{}] invalid temperature: {}", name, currentTemperature);
+        if (!isValidTemperature(inletTemperature)) {
+            log.warning("[pool-heat-ctrl-{}] invalid inlet temperature: {}", name, inletTemperature);
             newHeatRequest = false;
             newStatus = STATUS_ERROR_SENSOR;
         } else if (!isValidFiltrationMode(poolFiltrationMode)) {
@@ -119,10 +128,10 @@ function makePoolHeatController(
                 log.warning("[pool-heat-ctrl-{}] invalid hysteresis: {}, using default: {}", name, hysteresis, defaultHysteresis);
                 hysteresis = defaultHysteresis;
             }
-            if (currentTemperature < (targetTemperature - hysteresis)) {
+            if (inletTemperature < (targetTemperature - hysteresis)) {
                 newHeatRequest = true;
                 newStatus = STATUS_HEATING;
-            } else if (currentTemperature > (targetTemperature + hysteresis)) {
+            } else if (inletTemperature > (targetTemperature + hysteresis)) {
                 newHeatRequest = false;
                 newStatus = STATUS_IDLE;
             } else {
@@ -135,8 +144,11 @@ function makePoolHeatController(
             dev[heatRequestTopicName] = newHeatRequest;
         }
         dev[statusTopicName] = newStatus;
-        if (isValidTemperature(currentTemperature)) {
-            dev[currentTopicName] = currentTemperature;
+        if (isValidTemperature(inletTemperature)) {
+            dev[inletTopicName] = inletTemperature;
+        }
+        if (isValidTemperature(outletTemperature)) {
+            dev[outletTopicName] = outletTemperature;
         }
     }
 
@@ -144,7 +156,8 @@ function makePoolHeatController(
         whenChanged: [
             modeTopicName,
             targetTopicName,
-            currentTemperatureTopicName,
+            inletTemperatureTopicName,
+            outletTemperatureTopicName,
             poolFiltrationModeTopicName,
             hysteresisTopicName
         ],
@@ -159,5 +172,6 @@ function makePoolHeatController(
 makePoolHeatController(
     "outdoor",
     "wb-m1w2_118/External Sensor 1",
+    "wb-m1w2_118/External Sensor 2",
     "pool-filtration-ctrl-outdoor/mode"
 );
