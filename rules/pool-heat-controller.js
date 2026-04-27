@@ -158,6 +158,6 @@ function makePoolHeatController(
 
 makePoolHeatController(
     "outdoor",
-    "wb-m1w2_69/External Sensor 1",
+    "wb-m1w2_118/External Sensor 1",
     "pool-filtration-ctrl-outdoor/mode"
 );
