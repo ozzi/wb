@@ -433,9 +433,15 @@ function makePoolFiltrationController(
         ],
         then: function (newValue) {
             if (newValue == 0 || newValue == 2) {
-                dev[pumpSwitchTopicName] = false;
+                // Выключаем насос только если он ещё включён
+                if (dev[pumpSwitchTopicName] !== false) {
+                    dev[pumpSwitchTopicName] = false;
+                }
             } else if (newValue == 1) {
-                dev[pumpSwitchTopicName] = true;
+                // Включаем насос только если он ещё выключен
+                if (dev[pumpSwitchTopicName] !== true) {
+                    dev[pumpSwitchTopicName] = true;
+                }
             }
         }
     });
@@ -447,10 +453,12 @@ function makePoolFiltrationController(
         then: function (newValue) {
             var mode = dev[modeTopicName];
             if (newValue == false) {
+                // Насос выключился — переходим в Off только из режима Фильтрация
                 if (mode == 1) {
                     dev[modeTopicName] = 0;
                 }
             } else if (newValue == true) {
+                // Насос включился — переходим в Фильтрацию только из режима Off
                 if (mode == 0) {
                     dev[modeTopicName] = 1;
                 }
