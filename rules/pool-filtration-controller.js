@@ -401,7 +401,8 @@ function makePoolFiltrationController(
         var now = Date.now();
         var totalVolume = dev[totalVolumeTopicName];
         var pumpOn = dev[pumpSwitchTopicName];
-        if (last_update > 0 && pumpOn) {
+        var mode = dev[modeTopicName];
+        if (last_update > 0 && pumpOn && mode == 1) {
             var hours = (now - last_update) / (1000 * 3600);
             var pumpFlow = dev[pumpFlowRateTopicName];
             if (!pumpFlow || pumpFlow <= 0) {
