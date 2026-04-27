@@ -5,7 +5,8 @@ function makePoolHeatController(
     outletTemperatureTopicName,
     outletTemperatureOkTopicName,
     poolFiltrationModeTopicName,
-    temperatureSettleMinutes
+    temperatureSettleMinutes,
+    heaterPowerTopicName
 ) {
     var deviceName = "pool-heat-ctrl-" + name;
     var defaultHysteresis = 0.5;
@@ -67,6 +68,12 @@ function makePoolHeatController(
                 value: false,
                 readonly: true
             },
+            flow_rate: {
+                title: "flow rate (m3/h)",
+                type: "value",
+                value: 0,
+                readonly: true
+            },
             outlet_offset: {
                 title: "outlet offset (calibration)",
                 type: "value",
@@ -116,6 +123,7 @@ function makePoolHeatController(
     var deltaTopicName = deviceName + "/temperature_delta";
     var deltaValidTopicName = deviceName + "/delta_valid";
     var temperaturesValidTopicName = deviceName + "/temperatures_valid";
+    var flowRateTopicName = deviceName + "/flow_rate";
     var outletOffsetTopicName = deviceName + "/outlet_offset";
     var calibrateTopicName = deviceName + "/calibrate";
     var statusTopicName = deviceName + "/status";
@@ -149,10 +157,28 @@ function makePoolHeatController(
         }
     }
 
+    function applyFlowRate() {
+        var deltaValid = dev[deltaValidTopicName];
+        if (deltaValid !== true) {
+            dev[flowRateTopicName] = 0;
+            return;
+        }
+        var power = dev[heaterPowerTopicName];
+        var delta = dev[deltaTopicName];
+        if (typeof power !== "number" || isNaN(power) || power <= 0 || delta <= 0) {
+            dev[flowRateTopicName] = 0;
+            return;
+        }
+        // Q [м³/ч] = P [Вт] / (ρ [кг/м³] * Cp [Дж/(кг·К)] * ΔT [°C]) * 3600
+        var flowRate = (power / (1000 * 4186 * delta)) * 3600;
+        dev[flowRateTopicName] = flowRate;
+    }
+
     function applyDeltaValid() {
         var temperaturesValid = dev[temperaturesValidTopicName];
         var outletOk = dev[outletTemperatureOkTopicName];
         dev[deltaValidTopicName] = (temperaturesValid === true && outletOk === true);
+        applyFlowRate();
     }
 
     function applyTemperaturesValid(value) {
@@ -219,7 +245,9 @@ function makePoolHeatController(
         if (isValidTemperature(outletTemperature)) {
             dev[outletTopicName] = outletTemperature;
             if (isValidTemperature(inletTemperature)) {
-                dev[deltaTopicName] = (outletTemperature + outletOffset) - inletTemperature;
+                var delta = (outletTemperature + outletOffset) - inletTemperature;
+                dev[deltaTopicName] = delta;
+                applyFlowRate();
             }
         }
     }
@@ -233,7 +261,8 @@ function makePoolHeatController(
             outletTemperatureTopicName,
             outletTemperatureOkTopicName,
             poolFiltrationModeTopicName,
-            hysteresisTopicName
+            hysteresisTopicName,
+            heaterPowerTopicName
         ],
         then: function () {
             applyHeatState();
@@ -293,5 +322,6 @@ makePoolHeatController(
     "wb-m1w2_118/External Sensor 2",
     "wb-m1w2_118/External Sensor 2 OK",
     "pool-filtration-ctrl-outdoor/mode",
-    5
+    5,
+    "ANTMINER S21e/power"
 );
