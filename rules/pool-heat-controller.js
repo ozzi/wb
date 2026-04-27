@@ -1,8 +1,11 @@
 function makePoolHeatController(
     name,
     inletTemperatureTopicName,
+    inletTemperatureOkTopicName,
     outletTemperatureTopicName,
-    poolFiltrationModeTopicName
+    outletTemperatureOkTopicName,
+    poolFiltrationModeTopicName,
+    temperatureSettleMinutes
 ) {
     var deviceName = "pool-heat-ctrl-" + name;
     var defaultHysteresis = 0.5;
@@ -13,6 +16,7 @@ function makePoolHeatController(
     var STATUS_HEATING                  = 3;
     var STATUS_ERROR_SENSOR             = 4;
     var STATUS_ERROR_NO_FILTRATION_DATA = 5;
+    var STATUS_TEMPERATURES_INVALID     = 6;
 
     defineVirtualDevice(deviceName, {
         title: "Pool Heat Controller - " + name,
@@ -51,6 +55,18 @@ function makePoolHeatController(
                 value: 0,
                 readonly: true
             },
+            delta_valid: {
+                title: "delta valid",
+                type: "switch",
+                value: false,
+                readonly: true
+            },
+            temperatures_valid: {
+                title: "temperatures valid",
+                type: "switch",
+                value: false,
+                readonly: true
+            },
             outlet_offset: {
                 title: "outlet offset (calibration)",
                 type: "value",
@@ -84,7 +100,8 @@ function makePoolHeatController(
                     2: {en: "Idle",                       ru: "Температура достигнута"},
                     3: {en: "Heating",                    ru: "Нагрев"},
                     4: {en: "Error: sensor",              ru: "Ошибка датчика"},
-                    5: {en: "Error: no filtration data",  ru: "Ошибка: нет данных фильтрации"}
+                    5: {en: "Error: no filtration data",  ru: "Ошибка: нет данных фильтрации"},
+                    6: {en: "Waiting: temperature settle", ru: "Ожидание: прогрев датчиков"}
                 }
             }
         }
@@ -97,9 +114,13 @@ function makePoolHeatController(
     var inletTopicName = deviceName + "/inlet_temperature";
     var outletTopicName = deviceName + "/outlet_temperature";
     var deltaTopicName = deviceName + "/temperature_delta";
+    var deltaValidTopicName = deviceName + "/delta_valid";
+    var temperaturesValidTopicName = deviceName + "/temperatures_valid";
     var outletOffsetTopicName = deviceName + "/outlet_offset";
     var calibrateTopicName = deviceName + "/calibrate";
     var statusTopicName = deviceName + "/status";
+
+    var settleTimer = null;
 
     function isValidTemperature(value) {
         return value !== null && value !== undefined && typeof value === "number" && !isNaN(value);
@@ -117,30 +138,57 @@ function makePoolHeatController(
         return mode === 1 && filtrationMode === 1;
     }
 
+    function isFiltrationActive(filtrationMode) {
+        return filtrationMode === 1;
+    }
+
+    function cancelSettleTimer() {
+        if (settleTimer !== null) {
+            clearTimeout(settleTimer);
+            settleTimer = null;
+        }
+    }
+
+    function applyDeltaValid() {
+        var temperaturesValid = dev[temperaturesValidTopicName];
+        var outletOk = dev[outletTemperatureOkTopicName];
+        dev[deltaValidTopicName] = (temperaturesValid === true && outletOk === true);
+    }
+
+    function applyTemperaturesValid(value) {
+        dev[temperaturesValidTopicName] = value;
+        applyDeltaValid();
+        applyHeatState();
+    }
+
     function applyHeatState() {
         var mode = dev[modeTopicName];
         var poolFiltrationMode = dev[poolFiltrationModeTopicName];
         var inletTemperature = dev[inletTemperatureTopicName];
         var outletTemperature = dev[outletTemperatureTopicName];
         var outletOffset = dev[outletOffsetTopicName];
+        var temperaturesValid = dev[temperaturesValidTopicName];
         var oldHeatRequest = dev[heatRequestTopicName];
         var newHeatRequest = oldHeatRequest;
         var newStatus = dev[statusTopicName];
 
-        if (!isValidTemperature(inletTemperature)) {
-            log.warning("[pool-heat-ctrl-{}] invalid inlet temperature: {}", name, inletTemperature);
-            newHeatRequest = false;
-            newStatus = STATUS_ERROR_SENSOR;
-        } else if (!isValidFiltrationMode(poolFiltrationMode)) {
+        if (!isValidFiltrationMode(poolFiltrationMode)) {
             log.warning("[pool-heat-ctrl-{}] filtration mode unavailable", name);
             newHeatRequest = false;
             newStatus = STATUS_ERROR_NO_FILTRATION_DATA;
+        } else if (!isValidTemperature(inletTemperature) || dev[inletTemperatureOkTopicName] !== true) {
+            log.warning("[pool-heat-ctrl-{}] invalid inlet temperature or sensor error", name);
+            newHeatRequest = false;
+            newStatus = STATUS_ERROR_SENSOR;
         } else if (mode !== 1) {
             newHeatRequest = false;
             newStatus = STATUS_OFF;
-        } else if (!isControllerActive(mode, poolFiltrationMode)) {
+        } else if (!isFiltrationActive(poolFiltrationMode)) {
             newHeatRequest = false;
             newStatus = STATUS_STANDBY;
+        } else if (!temperaturesValid) {
+            newHeatRequest = false;
+            newStatus = STATUS_TEMPERATURES_INVALID;
         } else {
             var targetTemperature = dev[targetTopicName];
             var hysteresis = dev[hysteresisTopicName];
@@ -164,6 +212,7 @@ function makePoolHeatController(
             dev[heatRequestTopicName] = newHeatRequest;
         }
         dev[statusTopicName] = newStatus;
+
         if (isValidTemperature(inletTemperature)) {
             dev[inletTopicName] = inletTemperature;
         }
@@ -180,12 +229,41 @@ function makePoolHeatController(
             modeTopicName,
             targetTopicName,
             inletTemperatureTopicName,
+            inletTemperatureOkTopicName,
             outletTemperatureTopicName,
+            outletTemperatureOkTopicName,
             poolFiltrationModeTopicName,
             hysteresisTopicName
         ],
         then: function () {
             applyHeatState();
+            applyDeltaValid();
+        }
+    });
+
+    defineRule("filtration-watch-" + name, {
+        whenChanged: [poolFiltrationModeTopicName],
+        then: function () {
+            var filtrationMode = dev[poolFiltrationModeTopicName];
+            if (isFiltrationActive(filtrationMode)) {
+                log.info("[pool-heat-ctrl-{}] filtration started, waiting {} min for temperatures to settle", name, temperatureSettleMinutes);
+                cancelSettleTimer();
+                settleTimer = setTimeout(function () {
+                    settleTimer = null;
+                    var inletOk = dev[inletTemperatureOkTopicName];
+                    if (inletOk === true) {
+                        log.info("[pool-heat-ctrl-{}] temperatures settled and inlet sensor ok, temperatures_valid = true", name);
+                        applyTemperaturesValid(true);
+                    } else {
+                        log.warning("[pool-heat-ctrl-{}] temperatures settle timeout but inlet sensor not ok", name);
+                        applyTemperaturesValid(false);
+                    }
+                }, temperatureSettleMinutes * 60 * 1000);
+            } else {
+                log.info("[pool-heat-ctrl-{}] filtration stopped, temperatures_valid = false", name);
+                cancelSettleTimer();
+                applyTemperaturesValid(false);
+            }
         }
     });
 
@@ -211,6 +289,9 @@ function makePoolHeatController(
 makePoolHeatController(
     "outdoor",
     "wb-m1w2_118/External Sensor 1",
+    "wb-m1w2_118/External Sensor 1 OK",
     "wb-m1w2_118/External Sensor 2",
-    "pool-filtration-ctrl-outdoor/mode"
+    "wb-m1w2_118/External Sensor 2 OK",
+    "pool-filtration-ctrl-outdoor/mode",
+    5
 );
