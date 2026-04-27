@@ -318,6 +318,7 @@ function makePoolHeatController(
         log.info("[pool-heat-ctrl-{}] filtration already active on start, temperatures_valid = true", name);
         applyTemperaturesValid(true);
     } else {
+        applyDeltaValid();
         applyHeatState();
     }
 }
