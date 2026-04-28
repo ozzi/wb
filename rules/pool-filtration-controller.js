@@ -132,12 +132,6 @@ function makePoolFiltrationController(
                 readonly: true,
                 value: 0
             },
-            filtration_rate: {
-                type: "value",
-                unit: "м3/ч",
-                readonly: true,
-                value: 0
-            },
             filtration_speed: {
                 type: "value",
                 unit: "м3/ч/м2",
@@ -251,7 +245,6 @@ function makePoolFiltrationController(
 
     var dailyCyclesTopicName = deviceName + "/daily_cycles";
     var totalVolumeTopicName = deviceName + "/total_filtration_volume";
-    var filtrationRateTopicName = deviceName + "/filtration_rate";
     var filtrationSpeedTopicName = deviceName + "/filtration_speed";
     var filterDiameterTopicName = deviceName + "/filter_diameter";
     var poolVolumeTopicName = deviceName + "/pool_volume";
@@ -356,21 +349,10 @@ function makePoolFiltrationController(
         }
     });
 
-    defineRule("filtration-rate-calc-" + name, {
-        whenChanged: [
-            pumpSwitchTopicName,
-            pumpFlowRateTopicName
-        ],
-        then: function () {
-            var pumpOn = dev[pumpSwitchTopicName];
-            var pumpFlow = dev[pumpFlowRateTopicName];
-            dev[filtrationRateTopicName] = pumpOn ? pumpFlow : 0;
-        }
-    });
-
     defineRule("filtration-speed-calc-" + name, {
         whenChanged: [
-            filtrationRateTopicName,
+            pumpSwitchTopicName,
+            pumpFlowRateTopicName,
             filterDiameterTopicName
         ],
         then: function () {
@@ -379,8 +361,10 @@ function makePoolFiltrationController(
                 log.warning("[pool-filtration-ctrl-{}] filter_diameter is zero or negative", name);
                 return;
             }
+            var pumpOn = dev[pumpSwitchTopicName];
+            var pumpFlow = dev[pumpFlowRateTopicName];
             var filterArea = Math.PI * Math.pow(dia / 2, 2);
-            var speed = dev[filtrationRateTopicName] / filterArea;
+            var speed = pumpOn ? pumpFlow / filterArea : 0;
             dev[filtrationSpeedTopicName] = speed;
         }
     });
