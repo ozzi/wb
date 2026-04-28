@@ -74,6 +74,12 @@ function makePoolHeatController(
                 value: 0,
                 readonly: true
             },
+            energy_consumed: {
+                title: "energy consumed (kWh)",
+                type: "value",
+                value: 0,
+                readonly: true
+            },
             outlet_offset: {
                 title: "outlet offset (calibration)",
                 type: "value",
@@ -82,6 +88,10 @@ function makePoolHeatController(
             },
             calibrate: {
                 title: "calibrate (set delta to zero)",
+                type: "pushbutton"
+            },
+            reset_energy: {
+                title: "reset energy counter",
                 type: "pushbutton"
             },
             hysteresis: {
@@ -124,11 +134,14 @@ function makePoolHeatController(
     var deltaValidTopicName = deviceName + "/delta_valid";
     var temperaturesValidTopicName = deviceName + "/temperatures_valid";
     var flowRateTopicName = deviceName + "/flow_rate";
+    var energyConsumedTopicName = deviceName + "/energy_consumed";
     var outletOffsetTopicName = deviceName + "/outlet_offset";
     var calibrateTopicName = deviceName + "/calibrate";
+    var resetEnergyTopicName = deviceName + "/reset_energy";
     var statusTopicName = deviceName + "/status";
 
     var settleTimer = null;
+    var energyLastUpdate = null;
 
     function isValidTemperature(value) {
         return value !== null && value !== undefined && typeof value === "number" && !isNaN(value);
@@ -185,6 +198,34 @@ function makePoolHeatController(
         dev[temperaturesValidTopicName] = value;
         applyDeltaValid();
         applyHeatState();
+    }
+
+    function tickEnergy() {
+        var now = Date.now();
+
+        // Сбрасываем lastUpdate при первом тике чтобы избежать огромного dt после перезапуска
+        if (energyLastUpdate === null) {
+            energyLastUpdate = now;
+            return;
+        }
+
+        var heatRequest = dev[heatRequestTopicName];
+        var power = dev[heaterPowerTopicName];
+        var deltaValid = dev[deltaValidTopicName];
+        var delta = dev[deltaTopicName];
+
+        var isHeating = (heatRequest === true) &&
+                        (typeof power === "number" && !isNaN(power) && power > 0) &&
+                        (deltaValid === true) &&
+                        (delta > 0);
+
+        if (isHeating) {
+            var dtHours = (now - energyLastUpdate) / 3600000;
+            var addedKwh = (power / 1000) * dtHours;
+            dev[energyConsumedTopicName] = dev[energyConsumedTopicName] + addedKwh;
+        }
+
+        energyLastUpdate = now;
     }
 
     function applyHeatState() {
@@ -270,6 +311,15 @@ function makePoolHeatController(
         }
     });
 
+    defineRule("energy-tick-" + name, {
+        when: function () { return true; },
+        then: function () { tickEnergy(); }
+    });
+
+    setInterval(function () {
+        tickEnergy();
+    }, 60 * 1000);
+
     defineRule("filtration-watch-" + name, {
         whenChanged: [poolFiltrationModeTopicName],
         then: function () {
@@ -309,6 +359,15 @@ function makePoolHeatController(
             log.info("[pool-heat-ctrl-{}] calibration: outlet_offset set to {}", name, newOffset);
             dev[outletOffsetTopicName] = newOffset;
             dev[deltaTopicName] = 0;
+        }
+    });
+
+    defineRule("reset-energy-" + name, {
+        whenChanged: [resetEnergyTopicName],
+        then: function () {
+            log.info("[pool-heat-ctrl-{}] energy counter reset", name);
+            dev[energyConsumedTopicName] = 0;
+            energyLastUpdate = Date.now();
         }
     });
 
