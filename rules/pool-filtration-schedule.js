@@ -1,3 +1,13 @@
+// Индексы временных окон
+var WINDOW_MORNING = 0;
+var WINDOW_DAY     = 1;
+var WINDOW_EVENING = 2;
+var WINDOW_NIGHT   = 3;
+
+// Формат строки расписания: "HH:MM-HH:MM,HH:MM-HH:MM,..."
+// Каждая пара — начало и конец временного окна, разделённые дефисом.
+// Окна разделяются запятой. Пример: "08:00-11:00,14:00-17:00"
+
 function arrayToString(arr) {
     return arr
         .filter(function (item) {
@@ -33,62 +43,102 @@ function isValidTimeStr(timeStr) {
     return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
 }
 
-function optimizedSchedule(windows) {
-    var result = [null, null, null, null];
-    if (windows[0] > 0) {
-        var morningTime = toMinutes("09:00");
-        var morningStart = Math.round(morningTime - windows[0] / 2);
-        var morningEnd = Math.round(morningTime + windows[0] / 2);
-        result[0] = [toTimeStr(morningStart), toTimeStr(morningEnd)];
+// Проверяет, попадает ли текущее время в окно вида "HH:MM-HH:MM"
+// Поддерживает окна, переходящие через полночь (например "23:00-01:00")
+function isCurrentTimeInWindow(windowStr) {
+    var parts = windowStr.split('-');
+    if (!parts[0] || !parts[1]) { return false; }
+    if (!isValidTimeStr(parts[0]) || !isValidTimeStr(parts[1])) { return false; }
+
+    var now = new Date();
+    var currentMinutes = now.getHours() * 60 + now.getMinutes();
+    var startTotal = toMinutes(parts[0]);
+    var endTotal = toMinutes(parts[1]);
+
+    if (endTotal < startTotal) {
+        // Окно переходит через полночь
+        return currentMinutes >= startTotal || currentMinutes < endTotal;
     }
-    if (windows[1] > 0) {
-        var dayTime = toMinutes("15:00");
-        var dayStart = Math.round(dayTime - windows[1] / 2);
-        var dayEnd = Math.round(dayTime + windows[1] / 2);
-        result[1] = [toTimeStr(dayStart), toTimeStr(dayEnd)];
-    }
-    if (windows[2] > 0) {
-        var eveningTime = toMinutes("21:00");
-        var eveningStart = Math.round(eveningTime - windows[2] / 2);
-        var eveningEnd = Math.round(eveningTime + windows[2] / 2);
-        result[2] = [toTimeStr(eveningStart), toTimeStr(eveningEnd)];
-    }
-    if (windows[3] > 0) {
-        var nightTime = toMinutes("03:00");
-        var nightStart = Math.round(nightTime - windows[3] / 2);
-        var nightEnd = Math.round(nightTime + windows[3] / 2);
-        result[3] = [toTimeStr(nightStart), toTimeStr(nightEnd)];
-    }
-    return result;
+    return currentMinutes >= startTotal && currentMinutes < endTotal;
 }
 
+// Рассчитывает окна фильтрации относительно времени рассвета и заката.
+// windows: массив длительностей в минутах [утро, день, вечер, ночь]
 function sunriseSunsetSchedule(sunriseStr, sunsetStr, windows) {
     var sunRise = toMinutes(sunriseStr);
     var sunSet = toMinutes(sunsetStr);
     var result = [null, null, null, null];
 
-    if (windows[0] > 0) {
+    // Утро: начинается сразу после рассвета
+    if (windows[WINDOW_MORNING] > 0) {
         var morningStart = sunRise;
-        var morningEnd = morningStart + windows[0];
-        result[0] = [toTimeStr(morningStart), toTimeStr(morningEnd)];
+        var morningEnd = morningStart + windows[WINDOW_MORNING];
+        result[WINDOW_MORNING] = [toTimeStr(morningStart), toTimeStr(morningEnd)];
     }
-    if (windows[1] > 0) {
+
+    // День: середина между рассветом и закатом
+    if (windows[WINDOW_DAY] > 0) {
         var midday = sunRise + (sunSet - sunRise) / 2;
-        var dayStart = Math.round(midday - windows[1] / 2);
-        var dayEnd = Math.round(midday + windows[1] / 2);
-        result[1] = [toTimeStr(dayStart), toTimeStr(dayEnd)];
+        var dayStart = Math.round(midday - windows[WINDOW_DAY] / 2);
+        var dayEnd = Math.round(midday + windows[WINDOW_DAY] / 2);
+        result[WINDOW_DAY] = [toTimeStr(dayStart), toTimeStr(dayEnd)];
     }
-    if (windows[2] > 0) {
+
+    // Вечер: завершается перед закатом
+    if (windows[WINDOW_EVENING] > 0) {
         var eveningEnd = sunSet;
-        var eveningStart = eveningEnd - windows[2];
-        result[2] = [toTimeStr(eveningStart), toTimeStr(eveningEnd)];
+        var eveningStart = eveningEnd - windows[WINDOW_EVENING];
+        result[WINDOW_EVENING] = [toTimeStr(eveningStart), toTimeStr(eveningEnd)];
     }
-    if (windows[3] > 0) {
+
+    // Ночь: середина между закатом и рассветом следующего дня
+    if (windows[WINDOW_NIGHT] > 0) {
         var nextSunrise = sunRise + 1440;
         var nightMid = sunSet + (nextSunrise - sunSet) / 2;
-        var nightStart = Math.round(nightMid - windows[3] / 2);
-        var nightEnd = Math.round(nightMid + windows[3] / 2);
-        result[3] = [toTimeStr(nightStart), toTimeStr(nightEnd)];
+        var nightStart = Math.round(nightMid - windows[WINDOW_NIGHT] / 2);
+        var nightEnd = Math.round(nightMid + windows[WINDOW_NIGHT] / 2);
+        result[WINDOW_NIGHT] = [toTimeStr(nightStart), toTimeStr(nightEnd)];
+    }
+
+    return result;
+}
+
+// Рассчитывает окна фильтрации по фиксированным точкам суток:
+// утро — 09:00, день — 15:00, вечер — 21:00, ночь — 03:00
+// windows: массив длительностей в минутах [утро, день, вечер, ночь]
+function optimizedSchedule(windows) {
+    var result = [null, null, null, null];
+
+    if (windows[WINDOW_MORNING] > 0) {
+        var morningTime = toMinutes("09:00");
+        result[WINDOW_MORNING] = [
+            toTimeStr(Math.round(morningTime - windows[WINDOW_MORNING] / 2)),
+            toTimeStr(Math.round(morningTime + windows[WINDOW_MORNING] / 2))
+        ];
+    }
+
+    if (windows[WINDOW_DAY] > 0) {
+        var dayTime = toMinutes("15:00");
+        result[WINDOW_DAY] = [
+            toTimeStr(Math.round(dayTime - windows[WINDOW_DAY] / 2)),
+            toTimeStr(Math.round(dayTime + windows[WINDOW_DAY] / 2))
+        ];
+    }
+
+    if (windows[WINDOW_EVENING] > 0) {
+        var eveningTime = toMinutes("21:00");
+        result[WINDOW_EVENING] = [
+            toTimeStr(Math.round(eveningTime - windows[WINDOW_EVENING] / 2)),
+            toTimeStr(Math.round(eveningTime + windows[WINDOW_EVENING] / 2))
+        ];
+    }
+
+    if (windows[WINDOW_NIGHT] > 0) {
+        var nightTime = toMinutes("03:00");
+        result[WINDOW_NIGHT] = [
+            toTimeStr(Math.round(nightTime - windows[WINDOW_NIGHT] / 2)),
+            toTimeStr(Math.round(nightTime + windows[WINDOW_NIGHT] / 2))
+        ];
     }
 
     return result;
@@ -168,6 +218,7 @@ function makePoolFiltrationSchedule(
                     2: { en: "Optimized", ru: "Оптимизированный" }
                 }
             },
+            // Формат: "HH:MM-HH:MM,HH:MM-HH:MM,..."
             schedule: {
                 type: "text",
                 readonly: true,
@@ -183,16 +234,16 @@ function makePoolFiltrationSchedule(
     });
 
     var targetDailyCyclesTopicName = deviceName + "/target_daily_cycles";
-    var workHoursPerDayTopicName = deviceName + "/work_hours_per_day";
-    var morningWeightTopicName = deviceName + "/morning_weight";
-    var dayWeightTopicName = deviceName + "/day_weight";
-    var eveningWeightTopicName = deviceName + "/evening_weight";
-    var nightWeightTopicName = deviceName + "/night_weight";
-    var sunriseTimeTopicName = deviceName + "/sunrise_time";
-    var sunsetTimeTopicName = deviceName + "/sunset_time";
-    var scheduleModeTopicName = deviceName + "/schedule_mode";
-    var scheduleTopicName = deviceName + "/schedule";
-    var calcTurnoverTimeTopicName = deviceName + "/calc_turnover_time";
+    var workHoursPerDayTopicName   = deviceName + "/work_hours_per_day";
+    var morningWeightTopicName     = deviceName + "/morning_weight";
+    var dayWeightTopicName         = deviceName + "/day_weight";
+    var eveningWeightTopicName     = deviceName + "/evening_weight";
+    var nightWeightTopicName       = deviceName + "/night_weight";
+    var sunriseTimeTopicName       = deviceName + "/sunrise_time";
+    var sunsetTimeTopicName        = deviceName + "/sunset_time";
+    var scheduleModeTopicName      = deviceName + "/schedule_mode";
+    var scheduleTopicName          = deviceName + "/schedule";
+    var calcTurnoverTimeTopicName  = deviceName + "/calc_turnover_time";
 
     defineRule("pool-cycles-calc-" + name, {
         whenChanged: [
@@ -224,32 +275,33 @@ function makePoolFiltrationSchedule(
 
             var dailyCycles = dev[targetDailyCyclesTopicName];
             var workHoursPerDay = poolVolume / 1000 * dailyCycles / pumpFlow;
-            if (workHoursPerDay > 24) {
-                workHoursPerDay = 24;
-            }
+            if (workHoursPerDay > 24) { workHoursPerDay = 24; }
 
-            var dayWeight = dev[dayWeightTopicName];
-            var nightWeight = dev[nightWeightTopicName];
             var morningWeight = dev[morningWeightTopicName];
+            var dayWeight     = dev[dayWeightTopicName];
             var eveningWeight = dev[eveningWeightTopicName];
-            var totalWeight = dayWeight + nightWeight + morningWeight + eveningWeight;
+            var nightWeight   = dev[nightWeightTopicName];
+            var totalWeight   = morningWeight + dayWeight + eveningWeight + nightWeight;
+
             if (totalWeight === 0) {
                 dev[scheduleTopicName] = "";
                 dev[workHoursPerDayTopicName] = 0;
                 return;
             }
 
-            var dayHours = workHoursPerDay * dayWeight / totalWeight;
-            var nightHours = workHoursPerDay * nightWeight / totalWeight;
-            var morningHours = workHoursPerDay * morningWeight / totalWeight;
-            var eveningHours = workHoursPerDay * eveningWeight / totalWeight;
+            // Длительности окон в минутах
+            var windows = [null, null, null, null];
+            windows[WINDOW_MORNING] = workHoursPerDay * morningWeight / totalWeight * 60;
+            windows[WINDOW_DAY]     = workHoursPerDay * dayWeight     / totalWeight * 60;
+            windows[WINDOW_EVENING] = workHoursPerDay * eveningWeight / totalWeight * 60;
+            windows[WINDOW_NIGHT]   = workHoursPerDay * nightWeight   / totalWeight * 60;
 
             var scheduleMode = dev[scheduleModeTopicName];
             var times = [];
 
             if (scheduleMode == 1) {
                 var sunriseTime = dev[sunriseTimeTopicName];
-                var sunsetTime = dev[sunsetTimeTopicName];
+                var sunsetTime  = dev[sunsetTimeTopicName];
                 if (!isValidTimeStr(sunriseTime)) {
                     log.warning("[pool-filtration-schedule-{}] invalid sunrise_time: '{}'", name, sunriseTime);
                     return;
@@ -258,19 +310,13 @@ function makePoolFiltrationSchedule(
                     log.warning("[pool-filtration-schedule-{}] invalid sunset_time: '{}'", name, sunsetTime);
                     return;
                 }
-                times = sunriseSunsetSchedule(
-                    sunriseTime,
-                    sunsetTime,
-                    [morningHours * 60, dayHours * 60, eveningHours * 60, nightHours * 60]
-                );
+                times = sunriseSunsetSchedule(sunriseTime, sunsetTime, windows);
             } else if (scheduleMode == 2) {
-                times = optimizedSchedule(
-                    [morningHours * 60, dayHours * 60, eveningHours * 60, nightHours * 60]
-                );
+                times = optimizedSchedule(windows);
             }
 
-            dev[workHoursPerDayTopicName] = workHoursPerDay;
-            dev[scheduleTopicName] = arrayToString(times);
+            dev[workHoursPerDayTopicName]  = workHoursPerDay;
+            dev[scheduleTopicName]         = arrayToString(times);
             dev[calcTurnoverTimeTopicName] = poolVolume / 1000 / pumpFlow;
         }
     });
@@ -280,41 +326,20 @@ function makePoolFiltrationSchedule(
         then: function () {
             var scheduleMode = dev[scheduleModeTopicName];
             if (scheduleMode == 0) { return; }
+
             var mode = dev[modeTopicName];
             if (mode == 2) { return; }
 
             var timeWindowsStr = dev[scheduleTopicName];
             if (!timeWindowsStr || timeWindowsStr === "") { return; }
+
             var timeWindows = timeWindowsStr.split(',');
-
-            var now = new Date();
-            var currentMinutes = now.getHours() * 60 + now.getMinutes();
-
             var isInWindow = false;
 
             for (var i = 0; i < timeWindows.length; i++) {
-                var timeWindow = timeWindows[i].split('-');
-                if (!timeWindow[0] || !timeWindow[1]) { continue; }
-                if (!isValidTimeStr(timeWindow[0]) || !isValidTimeStr(timeWindow[1])) {
-                    log.warning("[pool-filtration-schedule-{}] invalid time window: '{}'", name, timeWindows[i]);
-                    continue;
-                }
-                var startParts = timeWindow[0].split(':');
-                var endParts = timeWindow[1].split(':');
-
-                var startTotal = parseInt(startParts[0], 10) * 60 + parseInt(startParts[1], 10);
-                var endTotal = parseInt(endParts[0], 10) * 60 + parseInt(endParts[1], 10);
-
-                if (endTotal < startTotal) {
-                    if (currentMinutes >= startTotal || currentMinutes < endTotal) {
-                        isInWindow = true;
-                        break;
-                    }
-                } else {
-                    if (currentMinutes >= startTotal && currentMinutes < endTotal) {
-                        isInWindow = true;
-                        break;
-                    }
+                if (isCurrentTimeInWindow(timeWindows[i])) {
+                    isInWindow = true;
+                    break;
                 }
             }
 

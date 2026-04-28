@@ -87,14 +87,13 @@ function makePoolFiltrationMeter(name, modeTopicName, timeframe) {
         last_update = now;
         dev[totalVolumeTopicName] = totalVolume;
         var poolVolume = dev[poolVolumeTopicName];
-        var cycles = totalVolume / poolVolume;
-        dev[dailyCyclesTopicName] = cycles;
+        dev[dailyCyclesTopicName] = totalVolume / poolVolume;
     };
 
     setInterval(dailyCyclesCalc, timeframe);
 
     defineRule("reset-daily-stats-" + name, {
-        when: cron("00 00 00 * *"),
+        when: cron("0 0 * * *"),
         then: function () {
             dev[totalVolumeTopicName] = 0;
             dev[dailyCyclesTopicName] = 0;
