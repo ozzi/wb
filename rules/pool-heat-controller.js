@@ -311,11 +311,6 @@ function makePoolHeatController(
         }
     });
 
-    defineRule("energy-tick-" + name, {
-        when: function () { return true; },
-        then: function () { tickEnergy(); }
-    });
-
     setInterval(function () {
         tickEnergy();
     }, 60 * 1000);
