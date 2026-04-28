@@ -325,10 +325,10 @@ function makePoolHeatController(
 
 makePoolHeatController(
     "outdoor",
-    "wb-m1w2_118/External Sensor 1",
-    "wb-m1w2_118/External Sensor 1 OK",
     "wb-m1w2_118/External Sensor 2",
     "wb-m1w2_118/External Sensor 2 OK",
+    "wb-m1w2_118/External Sensor 1",
+    "wb-m1w2_118/External Sensor 1 OK",
     "pool-filtration-ctrl-outdoor/mode",
     5,
     "ANTMINER S21e/power"
