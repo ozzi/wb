@@ -46,14 +46,20 @@ function isValidTimeStr(timeStr) {
 // Проверяет, попадает ли текущее время в окно вида "HH:MM-HH:MM"
 // Поддерживает окна, переходящие через полночь (например "23:00-01:00")
 function isCurrentTimeInWindow(windowStr) {
-    var parts = windowStr.split('-');
-    if (!parts[0] || !parts[1]) { return false; }
-    if (!isValidTimeStr(parts[0]) || !isValidTimeStr(parts[1])) { return false; }
+    // Окно имеет формат "HH:MM-HH:MM", где дефис стоит на позиции 5
+    // Используем indexOf чтобы не путать дефис-разделитель с двоеточием
+    var sepIndex = windowStr.indexOf('-', 1);
+    if (sepIndex === -1) { return false; }
+
+    var startStr = windowStr.substring(0, sepIndex);
+    var endStr   = windowStr.substring(sepIndex + 1);
+
+    if (!isValidTimeStr(startStr) || !isValidTimeStr(endStr)) { return false; }
 
     var now = new Date();
     var currentMinutes = now.getHours() * 60 + now.getMinutes();
-    var startTotal = toMinutes(parts[0]);
-    var endTotal = toMinutes(parts[1]);
+    var startTotal = toMinutes(startStr);
+    var endTotal   = toMinutes(endStr);
 
     if (endTotal < startTotal) {
         // Окно переходит через полночь
@@ -331,7 +337,12 @@ function makePoolFiltrationSchedule(
             if (mode == 2) { return; }
 
             var timeWindowsStr = dev[scheduleTopicName];
-            if (!timeWindowsStr || timeWindowsStr === "") { return; }
+
+            // Если расписание пустое — выключаем насос
+            if (!timeWindowsStr || timeWindowsStr === "") {
+                if (mode != 0) { dev[modeTopicName] = 0; }
+                return;
+            }
 
             var timeWindows = timeWindowsStr.split(',');
             var isInWindow = false;
