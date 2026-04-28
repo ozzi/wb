@@ -235,16 +235,6 @@ function makePoolFiltrationController(
                     2: { en: "Backwash", ru: "Обратная промывка" }
                 }
             },
-            schedule_type: {
-                title: "schedule type",
-                type: "value",
-                value: 0,
-                readonly: false,
-                enum: {
-                    0: { en: "Sunrise-Sunset", ru: "Рассвет-Закат" },
-                    1: { en: "Optimized", ru: "Оптимизированный" }
-                }
-            },
             schedule_mode: {
                 title: "schedule mode",
                 type: "value",
@@ -252,7 +242,8 @@ function makePoolFiltrationController(
                 readonly: false,
                 enum: {
                     0: { en: "Manual", ru: "Вручную" },
-                    1: { en: "On schedule", ru: "По заданному расписанию" }
+                    1: { en: "Sunrise-Sunset", ru: "Рассвет-Закат" },
+                    2: { en: "Optimized", ru: "Оптимизированный" }
                 }
             }
         }
@@ -275,7 +266,6 @@ function makePoolFiltrationController(
 
     var scheduleTopicName = deviceName + "/schedule";
     var scheduleModeTopicName = deviceName + "/schedule_mode";
-    var scheduleTypeTopicName = deviceName + "/schedule_type";
 
     var sunriseTimeTopicName = deviceName + "/sunrise_time";
     var sunsetTimeTopicName = deviceName + "/sunset_time";
@@ -294,7 +284,7 @@ function makePoolFiltrationController(
             eveningWeightTopicName,
             sunriseTimeTopicName,
             sunsetTimeTopicName,
-            scheduleTypeTopicName
+            scheduleModeTopicName
         ],
         then: function (newValue) {
             var poolVolume = dev[poolVolumeTopicName];
@@ -331,11 +321,11 @@ function makePoolFiltrationController(
             var nightHours = workHoursPerDay * nightWeight / totalWeight;
             var morningHours = workHoursPerDay * morningWeight / totalWeight;
             var eveningHours = workHoursPerDay * eveningWeight / totalWeight;
-            var scheduleType = dev[scheduleTypeTopicName];
+            var scheduleMode = dev[scheduleModeTopicName];
 
             var times = [];
 
-            if (scheduleType == 0) {
+            if (scheduleMode == 1) {
                 var sunriseTime = dev[sunriseTimeTopicName];
                 var sunsetTime = dev[sunsetTimeTopicName];
                 if (!isValidTimeStr(sunriseTime)) {
@@ -351,7 +341,7 @@ function makePoolFiltrationController(
                     sunsetTime,
                     [morningHours * 60, dayHours * 60, eveningHours * 60, nightHours * 60]
                 );
-            } else {
+            } else if (scheduleMode == 2) {
                 times = optimizedSchedule(
                     [morningHours * 60, dayHours * 60, eveningHours * 60, nightHours * 60]
                 );
@@ -472,7 +462,7 @@ function makePoolFiltrationController(
         when: cron("@every 1m"),
         then: function () {
             var scheduleMode = dev[scheduleModeTopicName];
-            if (scheduleMode != 1) { return; }
+            if (scheduleMode == 0) { return; }
             var mode = dev[modeTopicName];
             if (mode == 2) { return; }
 
