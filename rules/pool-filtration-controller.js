@@ -153,15 +153,10 @@ function makePoolFiltrationController(
 
 // --- Точка входа ---
 
-var ctrl = makePoolFiltrationController(
-    "outdoor",
-    "wb-mr6cu_91/K1",
-    null,
-    null,
-    "wb-mcm8_238/Input 3"
-);
+// modeTopicName вычисляется заранее, т.к. имя детерминировано
+var modeTopicName = "pool-filtration-ctrl-outdoor/mode";
 
-var meter = makePoolFiltrationMeter("outdoor", ctrl.modeTopicName, 5000);
+var meter = makePoolFiltrationMeter("outdoor", modeTopicName, 5000);
 
 var sched = makePoolFiltrationSchedule(
     "outdoor",
