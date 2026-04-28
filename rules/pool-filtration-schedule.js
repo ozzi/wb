@@ -98,7 +98,8 @@ function makePoolFiltrationSchedule(
     name,
     poolVolumeTopicName,
     pumpFlowRateTopicName,
-    filterDiameterTopicName
+    filterDiameterTopicName,
+    modeTopicName
 ) {
     var deviceName = "pool-filtration-schedule-" + name;
 
@@ -271,6 +272,57 @@ function makePoolFiltrationSchedule(
             dev[workHoursPerDayTopicName] = workHoursPerDay;
             dev[scheduleTopicName] = arrayToString(times);
             dev[calcTurnoverTimeTopicName] = poolVolume / 1000 / pumpFlow;
+        }
+    });
+
+    defineRule("filtration-schedule-" + name, {
+        when: cron("@every 1m"),
+        then: function () {
+            var scheduleMode = dev[scheduleModeTopicName];
+            if (scheduleMode == 0) { return; }
+            var mode = dev[modeTopicName];
+            if (mode == 2) { return; }
+
+            var timeWindowsStr = dev[scheduleTopicName];
+            if (!timeWindowsStr || timeWindowsStr === "") { return; }
+            var timeWindows = timeWindowsStr.split(',');
+
+            var now = new Date();
+            var currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+            var isInWindow = false;
+
+            for (var i = 0; i < timeWindows.length; i++) {
+                var timeWindow = timeWindows[i].split('-');
+                if (!timeWindow[0] || !timeWindow[1]) { continue; }
+                if (!isValidTimeStr(timeWindow[0]) || !isValidTimeStr(timeWindow[1])) {
+                    log.warning("[pool-filtration-schedule-{}] invalid time window: '{}'", name, timeWindows[i]);
+                    continue;
+                }
+                var startParts = timeWindow[0].split(':');
+                var endParts = timeWindow[1].split(':');
+
+                var startTotal = parseInt(startParts[0], 10) * 60 + parseInt(startParts[1], 10);
+                var endTotal = parseInt(endParts[0], 10) * 60 + parseInt(endParts[1], 10);
+
+                if (endTotal < startTotal) {
+                    if (currentMinutes >= startTotal || currentMinutes < endTotal) {
+                        isInWindow = true;
+                        break;
+                    }
+                } else {
+                    if (currentMinutes >= startTotal && currentMinutes < endTotal) {
+                        isInWindow = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isInWindow) {
+                if (mode != 1) { dev[modeTopicName] = 1; }
+            } else {
+                if (mode != 0) { dev[modeTopicName] = 0; }
+            }
         }
     });
 
