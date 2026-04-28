@@ -145,11 +145,23 @@ function makePoolFiltrationController(
             }
         });
     }
+
+    return {
+        modeTopicName: modeTopicName
+    };
 }
 
 // --- Точка входа ---
 
-var meter = makePoolFiltrationMeter("outdoor", "wb-mr6cu_91/K1", 5000);
+var ctrl = makePoolFiltrationController(
+    "outdoor",
+    "wb-mr6cu_91/K1",
+    null,
+    null,
+    "wb-mcm8_238/Input 3"
+);
+
+var meter = makePoolFiltrationMeter("outdoor", ctrl.modeTopicName, 5000);
 
 var sched = makePoolFiltrationSchedule(
     "outdoor",

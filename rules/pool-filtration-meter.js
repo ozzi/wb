@@ -1,4 +1,4 @@
-function makePoolFiltrationMeter(name, pumpSwitchTopicName, timeframe) {
+function makePoolFiltrationMeter(name, modeTopicName, timeframe) {
     var deviceName = "pool-filtration-meter-" + name;
 
     defineVirtualDevice(deviceName, {
@@ -51,7 +51,7 @@ function makePoolFiltrationMeter(name, pumpSwitchTopicName, timeframe) {
 
     defineRule("filtration-speed-calc-" + name, {
         whenChanged: [
-            pumpSwitchTopicName,
+            modeTopicName,
             pumpFlowRateTopicName,
             filterDiameterTopicName
         ],
@@ -61,10 +61,10 @@ function makePoolFiltrationMeter(name, pumpSwitchTopicName, timeframe) {
                 log.warning("[pool-filtration-meter-{}] filter_diameter is zero or negative", name);
                 return;
             }
-            var pumpOn = dev[pumpSwitchTopicName];
+            var isFiltration = dev[modeTopicName] == 1;
             var pumpFlow = dev[pumpFlowRateTopicName];
             var filterArea = Math.PI * Math.pow(dia / 2, 2);
-            var speed = pumpOn ? pumpFlow / filterArea : 0;
+            var speed = isFiltration ? pumpFlow / filterArea : 0;
             dev[filtrationSpeedTopicName] = speed;
         }
     });
@@ -74,8 +74,8 @@ function makePoolFiltrationMeter(name, pumpSwitchTopicName, timeframe) {
     var dailyCyclesCalc = function () {
         var now = Date.now();
         var totalVolume = dev[totalVolumeTopicName];
-        var pumpOn = dev[pumpSwitchTopicName];
-        if (last_update > 0 && pumpOn) {
+        var isFiltration = dev[modeTopicName] == 1;
+        if (last_update > 0 && isFiltration) {
             var hours = (now - last_update) / (1000 * 3600);
             var pumpFlow = dev[pumpFlowRateTopicName];
             if (!pumpFlow || pumpFlow <= 0) {
