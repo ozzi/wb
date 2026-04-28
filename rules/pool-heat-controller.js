@@ -200,6 +200,16 @@ function makePoolHeatController(
         applyHeatState();
     }
 
+    function initTemperaturesValid() {
+        var filtrationMode = dev[poolFiltrationModeTopicName];
+        if (isFiltrationActive(filtrationMode)) {
+            log.info("[pool-heat-ctrl-{}] filtration already active on start, temperatures_valid = true", name);
+            dev[temperaturesValidTopicName] = true;
+        } else {
+            dev[temperaturesValidTopicName] = false;
+        }
+    }
+
     function tickEnergy() {
         var now = Date.now();
 
@@ -366,15 +376,10 @@ function makePoolHeatController(
         }
     });
 
-    // При старте: если фильтрация уже активна — сразу считаем датчики валидными
-    var initialFiltrationMode = dev[poolFiltrationModeTopicName];
-    if (isFiltrationActive(initialFiltrationMode)) {
-        log.info("[pool-heat-ctrl-{}] filtration already active on start, temperatures_valid = true", name);
-        applyTemperaturesValid(true);
-    } else {
-        applyDeltaValid();
-        applyHeatState();
-    }
+    // Инициализация при старте
+    initTemperaturesValid();
+    applyDeltaValid();
+    applyHeatState();
 }
 
 makePoolHeatController(
