@@ -193,13 +193,13 @@ function makeSekoDosingController(
         cells: cells
     });
 
-    var modeTopicName            = deviceName + "/mode";
-    var bathingDurationTopicName = deviceName + "/bathing_duration";
+    var modeTopicName             = deviceName + "/mode";
+    var bathingDurationTopicName  = deviceName + "/bathing_duration";
     var bathingRemainingTopicName = deviceName + "/bathing_remaining";
-    var dosingActiveTopicName    = deviceName + "/dosing_active";
+    var dosingActiveTopicName     = deviceName + "/dosing_active";
     var statusTopicName           = deviceName + "/status";
-    var phMinusEmptyTopicName          = deviceName + "/ph_minus_empty";
-    var chlorineEmptyTopicName         = deviceName + "/chlorine_empty";
+    var phMinusEmptyTopicName     = phMinusSensorTopicName     ? deviceName + "/ph_minus_empty"  : null;
+    var chlorineEmptyTopicName    = chlorineSensorTopicName    ? deviceName + "/chlorine_empty"  : null;
     var phCalibrationIntervalTopicName = deviceName + "/ph_calibration_interval";
     var phCalibratedAtTopicName        = deviceName + "/ph_calibrated_at";
     var phNeedsCalibrationTopicName    = deviceName + "/ph_needs_calibration";
@@ -209,17 +209,17 @@ function makeSekoDosingController(
     var redoxNeedsCalibrationTopicName    = deviceName + "/redox_needs_calibration";
     var redoxCalibrateBtnTopicName        = deviceName + "/redox_calibrate_btn";
 
-    var phPumpFlowRateTopicName      = deviceName + "/ph_pump_flow_rate";
-    var phPumpDutyCycleTopicName     = deviceName + "/ph_pump_duty_cycle";
-    var phPumpDailyRuntimeTopicName  = deviceName + "/ph_pump_daily_runtime";
-    var phPumpTotalVolumeTopicName   = deviceName + "/ph_pump_total_volume";
-    var phPumpResetBtnTopicName      = deviceName + "/ph_pump_reset_btn";
+    var phPumpFlowRateTopicName     = phPumpSensorTopicName      ? deviceName + "/ph_pump_flow_rate"      : null;
+    var phPumpDutyCycleTopicName    = phPumpSensorTopicName      ? deviceName + "/ph_pump_duty_cycle"     : null;
+    var phPumpDailyRuntimeTopicName = phPumpSensorTopicName      ? deviceName + "/ph_pump_daily_runtime"  : null;
+    var phPumpTotalVolumeTopicName  = phPumpSensorTopicName      ? deviceName + "/ph_pump_total_volume"   : null;
+    var phPumpResetBtnTopicName     = phPumpSensorTopicName      ? deviceName + "/ph_pump_reset_btn"      : null;
 
-    var chlorinePumpFlowRateTopicName      = deviceName + "/chlorine_pump_flow_rate";
-    var chlorinePumpDutyCycleTopicName     = deviceName + "/chlorine_pump_duty_cycle";
-    var chlorinePumpDailyRuntimeTopicName  = deviceName + "/chlorine_pump_daily_runtime";
-    var chlorinePumpTotalVolumeTopicName   = deviceName + "/chlorine_pump_total_volume";
-    var chlorinePumpResetBtnTopicName      = deviceName + "/chlorine_pump_reset_btn";
+    var chlorinePumpFlowRateTopicName     = chlorinePumpSensorTopicName ? deviceName + "/chlorine_pump_flow_rate"     : null;
+    var chlorinePumpDutyCycleTopicName    = chlorinePumpSensorTopicName ? deviceName + "/chlorine_pump_duty_cycle"    : null;
+    var chlorinePumpDailyRuntimeTopicName = chlorinePumpSensorTopicName ? deviceName + "/chlorine_pump_daily_runtime" : null;
+    var chlorinePumpTotalVolumeTopicName  = chlorinePumpSensorTopicName ? deviceName + "/chlorine_pump_total_volume"  : null;
+    var chlorinePumpResetBtnTopicName     = chlorinePumpSensorTopicName ? deviceName + "/chlorine_pump_reset_btn"     : null;
 
     var bathingTimer     = null;
     var bathingTickTimer = null;
@@ -280,6 +280,7 @@ function makeSekoDosingController(
 
         // Тик каждую минуту — обновляем оставшееся время
         bathingTickTimer = setInterval(function () {
+            if (bathingEndTime === null) { return; }
             var remaining = Math.ceil((bathingEndTime - Date.now()) / 60000);
             if (remaining < 0) { remaining = 0; }
             dev[bathingRemainingTopicName] = remaining;
@@ -329,7 +330,7 @@ function makeSekoDosingController(
         });
     }
 
-    if (phMinusSensorTopicName) {
+    if (phMinusSensorTopicName && phMinusEmptyTopicName) {
         defineRule("dosing-ph-minus-changed-" + name, {
             whenChanged: [phMinusSensorTopicName],
             then: function (newValue) {
@@ -341,7 +342,7 @@ function makeSekoDosingController(
         });
     }
 
-    if (chlorineSensorTopicName) {
+    if (chlorineSensorTopicName && chlorineEmptyTopicName) {
         defineRule("dosing-chlorine-changed-" + name, {
             whenChanged: [chlorineSensorTopicName],
             then: function (newValue) {
@@ -519,6 +520,10 @@ function makeSekoDosingController(
             checkCalibration();
         }
     });
+
+    // Инициализация при старте — приводим реле и статус в актуальное состояние
+    applyRelay();
+    checkCalibration();
 
     return {
         modeTopicName: modeTopicName
