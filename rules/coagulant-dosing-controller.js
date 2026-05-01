@@ -39,6 +39,13 @@ function makeCoagulantDosingController(
                 value: 100,
                 readonly: false
             },
+            filtration_hours: {
+                title: "filtration hours per day",
+                type: "value",
+                unit: "ч/сут",
+                value: 8,
+                readonly: false
+            },
             flow_rate: {
                 title: "pump flow rate",
                 type: "value",
@@ -65,6 +72,20 @@ function makeCoagulantDosingController(
                 value: "idle",
                 readonly: true
             },
+            daily_dose: {
+                title: "daily dose target",
+                type: "value",
+                unit: "мл",
+                value: 0,
+                readonly: true
+            },
+            dosed_today: {
+                title: "dosed today",
+                type: "value",
+                unit: "мл",
+                value: 0,
+                readonly: true
+            },
             total_volume: {
                 title: "total volume dosed",
                 type: "value",
@@ -84,37 +105,49 @@ function makeCoagulantDosingController(
     var poolVolumeTopicName     = deviceName + "/pool_volume";
     var doseRateTopicName       = deviceName + "/dose_rate";
     var concentrationTopicName  = deviceName + "/concentration";
-    var flowRateTopicName       = deviceName + "/flow_rate";
-    var doseDurationTopicName   = deviceName + "/dose_duration";
-    var dosingActiveTopicName   = deviceName + "/dosing_active";
-    var statusTopicName         = deviceName + "/status";
-    var totalVolumeTopicName    = deviceName + "/total_volume";
-    var resetBtnTopicName       = deviceName + "/reset_btn";
+    var filtrationHoursTopicName = deviceName + "/filtration_hours";
+    var flowRateTopicName        = deviceName + "/flow_rate";
+    var doseDurationTopicName    = deviceName + "/dose_duration";
+    var dosingActiveTopicName    = deviceName + "/dosing_active";
+    var statusTopicName          = deviceName + "/status";
+    var dailyDoseTopicName       = deviceName + "/daily_dose";
+    var dosedTodayTopicName      = deviceName + "/dosed_today";
+    var totalVolumeTopicName     = deviceName + "/total_volume";
+    var resetBtnTopicName        = deviceName + "/reset_btn";
 
     var canisterEmpty = false;
 
     var doseTimer     = null;
     var intervalTimer = null;
 
-    // Рассчитываем длительность одной дозы в секундах и обновляем топик
+    // Рассчитываем суточную норму (мл чистого коагулянта) и длительность одной дозы
     function calcAndApplyDoseDuration() {
-        var poolVolume    = dev[poolVolumeTopicName];
-        var doseRate      = dev[doseRateTopicName];
-        var concentration = dev[concentrationTopicName];
-        var flowRate      = dev[flowRateTopicName];
+        var poolVolume       = dev[poolVolumeTopicName];
+        var doseRate         = dev[doseRateTopicName];
+        var concentration    = dev[concentrationTopicName];
+        var flowRate         = dev[flowRateTopicName];
+        var filtrationHours  = dev[filtrationHoursTopicName];
 
-        if (!poolVolume    || poolVolume    <= 0 ||
-            !doseRate      || doseRate      <= 0 ||
-            !concentration || concentration <= 0 ||
-            !flowRate      || flowRate      <= 0) {
+        if (!poolVolume      || poolVolume      <= 0 ||
+            !doseRate        || doseRate        <= 0 ||
+            !concentration   || concentration   <= 0 ||
+            !flowRate        || flowRate        <= 0 ||
+            !filtrationHours || filtrationHours <= 0) {
             dev[doseDurationTopicName] = 0;
+            dev[dailyDoseTopicName]    = 0;
             return 0;
         }
 
-        // Суточный объём раствора (л) = норма(мл) * объём(м³) / концентрация(мл/л) / 1000
-        var dailyVolumeLiters = (doseRate * poolVolume) / (concentration * 1000);
-        // Объём одной дозы (л) = суточный объём / 24 доз
-        var doseVolumeLiters  = dailyVolumeLiters / 24;
+        // Суточная норма чистого коагулянта (мл)
+        var dailyDoseMl = doseRate * poolVolume;
+        dev[dailyDoseTopicName] = Math.round(dailyDoseMl);
+
+        // Количество доз в сутки = часы фильтрации (одна доза в час)
+        var dosesPerDay = filtrationHours;
+
+        // Объём раствора на одну дозу (л)
+        var doseVolumeLiters = (dailyDoseMl / concentration) / dosesPerDay;
+
         // Длительность (сек) = объём(л) / производительность(л/ч) * 3600
         var durationSec = doseVolumeLiters / flowRate * 3600;
         durationSec = Math.round(durationSec);
@@ -166,6 +199,14 @@ function makeCoagulantDosingController(
             return;
         }
 
+        // Проверяем суточный лимит
+        var dailyDose  = dev[dailyDoseTopicName];
+        var dosedToday = dev[dosedTodayTopicName];
+        if (dailyDose > 0 && dosedToday >= dailyDose) {
+            log.info("[coagulant-dosing-ctrl-{}] daily dose limit reached ({} ml), skipping", name, dailyDose);
+            return;
+        }
+
         log.info("[coagulant-dosing-ctrl-{}] starting dose for {} sec", name, duration);
 
         dev[relayTopicName]        = true;
@@ -181,7 +222,9 @@ function makeCoagulantDosingController(
             if (flowRate && flowRate > 0 && concentration && concentration > 0) {
                 var durationHours = duration / 3600;
                 // объём раствора (л) × концентрация (мл/л) = мл чистого коагулянта
-                dev[totalVolumeTopicName] += flowRate * durationHours * concentration;
+                var dosedMl = flowRate * durationHours * concentration;
+                dev[dosedTodayTopicName]  += dosedMl;
+                dev[totalVolumeTopicName] += dosedMl;
             }
 
             stopDose();
@@ -238,6 +281,7 @@ function makeCoagulantDosingController(
             poolVolumeTopicName,
             doseRateTopicName,
             concentrationTopicName,
+            filtrationHoursTopicName,
             flowRateTopicName
         ],
         then: function () {
@@ -257,6 +301,14 @@ function makeCoagulantDosingController(
             }
         });
     }
+
+    defineRule("coagulant-daily-reset-" + name, {
+        when: cron("0 0 * * *"),
+        then: function () {
+            dev[dosedTodayTopicName] = 0;
+            log.info("[coagulant-dosing-ctrl-{}] daily dose counter reset", name);
+        }
+    });
 
     defineRule("coagulant-reset-btn-" + name, {
         whenChanged: [resetBtnTopicName],
