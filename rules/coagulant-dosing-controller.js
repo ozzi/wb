@@ -4,7 +4,8 @@ var COAGULANT_DOSE_INTERVAL_MS = 60 * 60 * 1000;
 function makeCoagulantDosingController(
     name,
     relayTopicName,
-    filtrationModeTopicName
+    filtrationModeTopicName,
+    levelSensorTopicName
 ) {
     var deviceName = "coagulant-dosing-ctrl-" + name;
 
@@ -75,6 +76,12 @@ function makeCoagulantDosingController(
                 title: "reset total volume",
                 type: "pushbutton",
                 readonly: false
+            },
+            canister_empty: {
+                title: "canister empty",
+                type: "switch",
+                value: false,
+                readonly: true
             }
         }
     });
@@ -89,6 +96,7 @@ function makeCoagulantDosingController(
     var statusTopicName         = deviceName + "/status";
     var totalVolumeTopicName    = deviceName + "/total_volume";
     var resetBtnTopicName       = deviceName + "/reset_btn";
+    var canisterEmptyTopicName  = deviceName + "/canister_empty";
 
     var doseTimer     = null;
     var intervalTimer = null;
@@ -222,6 +230,18 @@ function makeCoagulantDosingController(
         }
     });
 
+    if (levelSensorTopicName) {
+        defineRule("coagulant-level-sensor-changed-" + name, {
+            whenChanged: [levelSensorTopicName],
+            then: function (newValue) {
+                dev[canisterEmptyTopicName] = (newValue === true);
+                if (newValue === true) {
+                    log.warning("[coagulant-dosing-ctrl-{}] coagulant canister is empty", name);
+                }
+            }
+        });
+    }
+
     defineRule("coagulant-reset-btn-" + name, {
         whenChanged: [resetBtnTopicName],
         then: function () {
@@ -244,5 +264,6 @@ function makeCoagulantDosingController(
 var coagulantDosing = makeCoagulantDosingController(
     "outdoor",
     "wb-mr6cu_91/K4",
-    "pool-filtration-ctrl-outdoor/mode"
+    "pool-filtration-ctrl-outdoor/mode",
+    undefined
 );
