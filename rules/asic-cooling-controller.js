@@ -470,5 +470,5 @@ makeASICCoolingController(
     "ANTMINER T21-1/state",
     "ANTMINER T21-2/current_preset",
     "ANTMINER T21-2/state",
-    "pool-heat-ctrl-outdoor/active"
+    "pool-heat-ctrl-outdoor/heat_request"
 );
