@@ -1,7 +1,8 @@
 function makeSekoDosingController(
     name,
     relayTopicName,
-    filtrationModeTopicName
+    filtrationModeTopicName,
+    alarmTopicName
 ) {
     var deviceName = "seko-dosing-ctrl-" + name;
 
@@ -38,6 +39,12 @@ function makeSekoDosingController(
                 type: "switch",
                 value: false,
                 readonly: true
+            },
+            status: {
+                title: "status",
+                type: "text",
+                value: "idle",
+                readonly: true
             }
         }
     });
@@ -46,6 +53,7 @@ function makeSekoDosingController(
     var bathingDurationTopicName = deviceName + "/bathing_duration";
     var bathingRemainingTopicName = deviceName + "/bathing_remaining";
     var dosingActiveTopicName    = deviceName + "/dosing_active";
+    var statusTopicName          = deviceName + "/status";
 
     var bathingTimer     = null;
     var bathingTickTimer = null;
@@ -64,9 +72,26 @@ function makeSekoDosingController(
         dev[bathingRemainingTopicName] = 0;
     }
 
+    function applyStatus() {
+        var mode             = dev[modeTopicName];
+        var filtrationMode   = dev[filtrationModeTopicName];
+        var bathingRemaining = dev[bathingRemainingTopicName];
+        var dosingActive     = dev[dosingActiveTopicName];
+
+        if (bathingRemaining > 0) {
+            dev[statusTopicName] = "bathing";
+        } else if (!dosingActive) {
+            dev[statusTopicName] = "idle";
+        } else if (alarmTopicName && dev[alarmTopicName] === true) {
+            dev[statusTopicName] = "alarm";
+        } else {
+            dev[statusTopicName] = "ok";
+        }
+    }
+
     function applyRelay() {
-        var mode            = dev[modeTopicName];
-        var filtrationMode  = dev[filtrationModeTopicName];
+        var mode             = dev[modeTopicName];
+        var filtrationMode   = dev[filtrationModeTopicName];
         var bathingRemaining = dev[bathingRemainingTopicName];
 
         var allowed = (mode === 0) &&
@@ -75,6 +100,7 @@ function makeSekoDosingController(
 
         dev[dosingActiveTopicName] = allowed;
         dev[relayTopicName] = allowed;
+        applyStatus();
     }
 
     function startBathing() {
@@ -124,6 +150,21 @@ function makeSekoDosingController(
         }
     });
 
+    if (alarmTopicName) {
+        defineRule("dosing-alarm-changed-" + name, {
+            whenChanged: [alarmTopicName],
+            then: function (newValue) {
+                // Игнорируем сигнал аварии если дозирование не активно —
+                // станция уходит в аварию когда мы сами отключаем реле
+                if (!dev[dosingActiveTopicName]) { return; }
+                if (newValue === true) {
+                    log.warning("[seko-dosing-ctrl-{}] alarm signal received from station", name);
+                }
+                applyStatus();
+            }
+        });
+    }
+
     return {
         modeTopicName: modeTopicName
     };
@@ -134,5 +175,6 @@ function makeSekoDosingController(
 var dosing = makeSekoDosingController(
     "outdoor",
     "wbio-ssr8/K1",
-    "pool-filtration-ctrl-outdoor/mode"
+    "pool-filtration-ctrl-outdoor/mode",
+    "wb-mcm8_238/Input 5"
 );
