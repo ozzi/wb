@@ -241,13 +241,14 @@ function makeSekoDosingController(
     function applyStatus() {
         var bathingRemaining = dev[bathingRemainingTopicName];
         var dosingActive     = dev[dosingActiveTopicName];
+        var alarm            = alarmTopicName ? dev[alarmTopicName] : false;
 
         if (bathingRemaining > 0) {
             dev[statusTopicName] = "bathing";
+        } else if (alarm === true) {
+            dev[statusTopicName] = "alarm";
         } else if (!dosingActive) {
             dev[statusTopicName] = "idle";
-        } else if (alarmTopicName && dev[alarmTopicName] === true) {
-            dev[statusTopicName] = "alarm";
         } else {
             dev[statusTopicName] = "ok";
         }
