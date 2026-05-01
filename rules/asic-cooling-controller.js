@@ -68,7 +68,7 @@ function makeASICPoolHeatController(
         } else if (heatRequest === HEAT_REQUEST_IDLE) {
             var miningStartedAt = dev[miningStartedAtTopicName];
             if (!miningStartedAt || miningStartedAt === 0) {
-                stopAllASICs();
+                // Асик никогда не запускался этим контроллером — ничего не делаем
                 return;
             }
             var minRunMinutes = dev[minRunMinutesTopicName];
