@@ -1,6 +1,11 @@
 // Контроллер охлаждения ASIC майнеров.
 // Управляет запуском и остановкой майнеров с учётом минимального времени работы.
 // Используется как драйвер исполнительного устройства — не содержит логики выбора источника тепла.
+//
+// Intent-модель: оркестратор пишет в топик intent одно из значений:
+//   "heat"       — запустить майнеры
+//   "idle"       — остановить с учётом минимального времени работы
+//   "force_stop" — немедленная остановка
 
 function makeASICCoolingController(name, asicDeviceNames) {
     var deviceName = "asic-cooling-ctrl-" + name;
@@ -8,6 +13,12 @@ function makeASICCoolingController(name, asicDeviceNames) {
     defineVirtualDevice(deviceName, {
         title: "ASIC Cooling Controller - " + name,
         cells: {
+            intent: {
+                title: "intent",
+                type: "text",
+                value: "force_stop",
+                readonly: false
+            },
             min_run_minutes: {
                 title: "min run minutes",
                 type: "value",
@@ -23,6 +34,7 @@ function makeASICCoolingController(name, asicDeviceNames) {
         }
     });
 
+    var intentTopicName = deviceName + "/intent";
     var minRunMinutesTopicName = deviceName + "/min_run_minutes";
     var miningStartedAtTopicName = deviceName + "/mining_started_at";
 
@@ -61,46 +73,48 @@ function makeASICCoolingController(name, asicDeviceNames) {
         }
     }
 
-    // Запросить нагрев (старт майнеров)
-    function requestHeat() {
-        cancelStopTimer();
-        if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
-            dev[miningStartedAtTopicName] = Date.now();
-        }
-        startAllASICs();
-    }
+    function applyIntent() {
+        var intent = dev[intentTopicName];
+        log("[asic-cooling-{}] intent = {}", name, intent);
 
-    // Запросить остановку с учётом минимального времени работы
-    function requestStop() {
-        var miningStartedAt = dev[miningStartedAtTopicName];
-        if (!miningStartedAt || miningStartedAt === 0) {
-            stopAllASICs();
-            return;
-        }
-        var minRunMinutes = dev[minRunMinutesTopicName];
-        var elapsed = (Date.now() - miningStartedAt) / 60000;
-        var remaining = minRunMinutes - elapsed;
-        if (remaining <= 0) {
-            stopAllASICs();
-        } else {
-            log("[asic-cooling-{}] waiting {} min before stop", name, Math.ceil(remaining));
+        if (intent === "heat") {
             cancelStopTimer();
-            stopTimer = setTimeout(function () {
-                stopTimer = null;
+            if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
+                dev[miningStartedAtTopicName] = Date.now();
+            }
+            startAllASICs();
+        } else if (intent === "idle") {
+            var miningStartedAt = dev[miningStartedAtTopicName];
+            if (!miningStartedAt || miningStartedAt === 0) {
                 stopAllASICs();
-            }, remaining * 60 * 1000);
+                return;
+            }
+            var minRunMinutes = dev[minRunMinutesTopicName];
+            var elapsed = (Date.now() - miningStartedAt) / 60000;
+            var remaining = minRunMinutes - elapsed;
+            if (remaining <= 0) {
+                stopAllASICs();
+            } else {
+                log("[asic-cooling-{}] waiting {} min before stop", name, Math.ceil(remaining));
+                cancelStopTimer();
+                stopTimer = setTimeout(function () {
+                    stopTimer = null;
+                    stopAllASICs();
+                }, remaining * 60 * 1000);
+            }
+        } else {
+            // "force_stop" или любое неизвестное значение
+            cancelStopTimer();
+            stopAllASICs();
         }
     }
 
-    // Немедленная остановка без учёта минимального времени работы
-    function forceStop() {
-        cancelStopTimer();
-        stopAllASICs();
-    }
+    defineRule("asic-cooling-intent-" + name, {
+        whenChanged: [intentTopicName],
+        then: function () {
+            applyIntent();
+        }
+    });
 
-    return {
-        requestHeat: requestHeat,
-        requestStop: requestStop,
-        forceStop:   forceStop
-    };
+    applyIntent();
 }

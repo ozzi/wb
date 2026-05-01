@@ -13,8 +13,9 @@ function makePoolHeatSourceController(
     boilerRelayTopicName
 ) {
     var deviceName = "pool-heat-source-ctrl-" + name;
+    var asicIntentTopicName = "asic-cooling-ctrl-" + name + "/intent";
 
-    var asicDriver = makeASICCoolingController(name, asicDeviceNames);
+    makeASICCoolingController(name, asicDeviceNames);
 
     defineVirtualDevice(deviceName, {
         title: "Pool Heat Source Controller - " + name,
@@ -55,7 +56,7 @@ function makePoolHeatSourceController(
 
         if (heatSource === 1) {
             // Режим электрокотла: асики останавливаем принудительно
-            asicDriver.forceStop();
+            dev[asicIntentTopicName] = "force_stop";
             if (heatRequest === POOL_STATUS_HEATING) {
                 startBoiler();
             } else if (heatRequest === POOL_STATUS_WAITING_SETTLE) {
@@ -70,14 +71,14 @@ function makePoolHeatSourceController(
         stopBoiler();
 
         if (heatRequest === POOL_STATUS_HEATING) {
-            asicDriver.requestHeat();
+            dev[asicIntentTopicName] = "heat";
         } else if (heatRequest === POOL_STATUS_WAITING_SETTLE) {
             log("[pool-heat-source-{}] ASIC mode: waiting for temperature settle, doing nothing", name);
         } else if (heatRequest === POOL_STATUS_IDLE) {
-            asicDriver.requestStop();
+            dev[asicIntentTopicName] = "idle";
         } else {
             // STATUS_OFF, STATUS_STANDBY, STATUS_ERROR_* — немедленная остановка
-            asicDriver.forceStop();
+            dev[asicIntentTopicName] = "force_stop";
         }
     }
 
