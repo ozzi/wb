@@ -5,13 +5,24 @@ var POOL_STATUS_WAITING_SETTLE   = 6;
 function makeASICPoolHeatController(
     name,
     poolHeatRequestTopicName,
-    asicDeviceNames
+    asicDeviceNames,
+    boilerRelayTopicName
 ) {
     var deviceName = "asic-pool-heat-ctrl-" + name;
 
     defineVirtualDevice(deviceName, {
         title: "ASIC Pool Heat Controller - " + name,
         cells: {
+            heat_source: {
+                title: "heat source",
+                type: "value",
+                value: 0,
+                readonly: false,
+                enum: {
+                    0: {en: "ASIC", ru: "ASIC"},
+                    1: {en: "Boiler", ru: "Электрокотёл"}
+                }
+            },
             min_run_minutes: {
                 title: "min run minutes",
                 type: "value",
@@ -27,6 +38,7 @@ function makeASICPoolHeatController(
         }
     });
 
+    var heatSourceTopicName = deviceName + "/heat_source";
     var minRunMinutesTopicName = deviceName + "/min_run_minutes";
     var miningStartedAtTopicName = deviceName + "/mining_started_at";
 
@@ -65,9 +77,41 @@ function makeASICPoolHeatController(
         }
     }
 
+    function stopBoiler() {
+        if (boilerRelayTopicName) {
+            log("[asic-pool-heat-{}] stopping boiler", name);
+            dev[boilerRelayTopicName] = false;
+        }
+    }
+
+    function startBoiler() {
+        if (boilerRelayTopicName) {
+            log("[asic-pool-heat-{}] starting boiler", name);
+            dev[boilerRelayTopicName] = true;
+        }
+    }
+
     function applyHeatRequest() {
         var heatRequest = dev[poolHeatRequestTopicName];
-        log("[asic-pool-heat-{}] heat_request = {}", name, heatRequest);
+        var heatSource  = dev[heatSourceTopicName];
+        log("[asic-pool-heat-{}] heat_request = {}, heat_source = {}", name, heatRequest, heatSource);
+
+        if (heatSource === 1) {
+            // Режим электрокотла: асики не трогаем, управляем только реле котла
+            cancelStopTimer();
+            stopAllASICs();
+            if (heatRequest === POOL_STATUS_HEATING) {
+                startBoiler();
+            } else if (heatRequest === POOL_STATUS_WAITING_SETTLE) {
+                log("[asic-pool-heat-{}] boiler mode: waiting for temperature settle, doing nothing", name);
+            } else {
+                stopBoiler();
+            }
+            return;
+        }
+
+        // Режим ASIC (heatSource === 0)
+        stopBoiler();
 
         if (heatRequest === POOL_STATUS_HEATING) {
             cancelStopTimer();
@@ -108,7 +152,7 @@ function makeASICPoolHeatController(
     }
 
     defineRule("asic-pool-heat-" + name, {
-        whenChanged: [poolHeatRequestTopicName],
+        whenChanged: [poolHeatRequestTopicName, heatSourceTopicName],
         then: function () {
             applyHeatRequest();
         }
@@ -120,5 +164,6 @@ function makeASICPoolHeatController(
 makeASICPoolHeatController(
     "outdoor",
     "pool-heat-ctrl-outdoor/status",
-    ["ANTMINER S21e"]
+    ["ANTMINER S21e"],
+    "wb-mr6cu_XX/K1"  // TODO: заменить на реальный топик реле электрокотла
 );
