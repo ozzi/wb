@@ -1,5 +1,6 @@
-var POOL_STATUS_IDLE    = 2;
-var POOL_STATUS_HEATING = 3;
+var POOL_STATUS_IDLE             = 2;
+var POOL_STATUS_HEATING          = 3;
+var POOL_STATUS_WAITING_SETTLE   = 6;
 
 function makeASICPoolHeatController(
     name,
@@ -76,6 +77,9 @@ function makeASICPoolHeatController(
                 dev[miningStartedAtTopicName] = Date.now();
             }
             startAllASICs();
+        } else if (heatRequest === POOL_STATUS_WAITING_SETTLE) {
+            // Фильтрация активна, ждём стабилизации температуры — майнеры не трогаем
+            log("[asic-pool-heat-{}] waiting for temperature settle, keeping current state", name);
         } else if (heatRequest === POOL_STATUS_IDLE) {
             var miningStartedAt = dev[miningStartedAtTopicName];
             if (!miningStartedAt || miningStartedAt === 0) {
