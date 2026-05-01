@@ -367,3 +367,13 @@ function makePoolFiltrationSchedule(
         scheduleModeTopicName: scheduleModeTopicName
     };
 }
+
+// --- Точка входа ---
+
+var sched = makePoolFiltrationSchedule(
+    "outdoor",
+    "pool-filtration-meter-outdoor/pool_volume",
+    "pool-filtration-meter-outdoor/pump_flow_rate",
+    "pool-filtration-meter-outdoor/filter_diameter",
+    "pool-filtration-ctrl-outdoor/mode"
+);

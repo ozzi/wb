@@ -106,3 +106,11 @@ function makePoolFiltrationMeter(name, modeTopicName, timeframe) {
         filterDiameterTopicName: filterDiameterTopicName
     };
 }
+
+// --- Точка входа ---
+
+var meter = makePoolFiltrationMeter(
+    "outdoor",
+    "pool-filtration-ctrl-outdoor/mode",
+    5000
+);

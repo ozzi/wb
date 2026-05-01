@@ -95,13 +95,3 @@ var ctrl = makePoolFiltrationController(
     "wb-mr6cu_91/K1",
     "wb-mcm8_238/Input 3"
 );
-
-var meter = makePoolFiltrationMeter("outdoor", ctrl.modeTopicName, 5000);
-
-var sched = makePoolFiltrationSchedule(
-    "outdoor",
-    meter.poolVolumeTopicName,
-    meter.pumpFlowRateTopicName,
-    meter.filterDiameterTopicName,
-    ctrl.modeTopicName
-);
