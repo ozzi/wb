@@ -1,6 +1,5 @@
-var HEAT_REQUEST_IDLE    = 0;
-var HEAT_REQUEST_HEATING = 1;
-var HEAT_REQUEST_STOP    = 2;
+var POOL_STATUS_IDLE    = 2;
+var POOL_STATUS_HEATING = 3;
 
 function makeASICPoolHeatController(
     name,
@@ -69,13 +68,10 @@ function makeASICPoolHeatController(
         var heatRequest = dev[poolHeatRequestTopicName];
         log("[asic-pool-heat-{}] heat_request = {}", name, heatRequest);
 
-        if (heatRequest === HEAT_REQUEST_HEATING) {
+        if (heatRequest === POOL_STATUS_HEATING) {
             cancelStopTimer();
             startAllASICs();
-        } else if (heatRequest === HEAT_REQUEST_STOP) {
-            cancelStopTimer();
-            stopAllASICs();
-        } else if (heatRequest === HEAT_REQUEST_IDLE) {
+        } else if (heatRequest === POOL_STATUS_IDLE) {
             var miningStartedAt = dev[miningStartedAtTopicName];
             if (!miningStartedAt || miningStartedAt === 0) {
                 // Асик никогда не запускался этим контроллером — ничего не делаем
@@ -94,6 +90,10 @@ function makeASICPoolHeatController(
                     stopAllASICs();
                 }, remaining * 60 * 1000);
             }
+        } else {
+            // STATUS_OFF, STATUS_STANDBY, STATUS_ERROR_* — немедленная остановка
+            cancelStopTimer();
+            stopAllASICs();
         }
     }
 
@@ -109,6 +109,6 @@ function makeASICPoolHeatController(
 
 makeASICPoolHeatController(
     "outdoor",
-    "pool-heat-ctrl-outdoor/heat_request",
+    "pool-heat-ctrl-outdoor/status",
     ["ANTMINER S21e"]
 );

@@ -100,17 +100,6 @@ function makePoolHeatController(
                 value: defaultHysteresis,
                 readonly: false
             },
-            heat_request: {
-                title: "heat request",
-                type: "value",
-                value: 2,
-                readonly: true,
-                enum: {
-                    0: {en: "Idle",    ru: "Ожидание"},
-                    1: {en: "Heating", ru: "Нагрев"},
-                    2: {en: "Stop",    ru: "Стоп"}
-                }
-            },
             status: {
                 title: "status",
                 type: "value",
@@ -129,13 +118,8 @@ function makePoolHeatController(
         }
     });
 
-    var HEAT_REQUEST_IDLE    = 0;
-    var HEAT_REQUEST_HEATING = 1;
-    var HEAT_REQUEST_STOP    = 2;
-
     var modeTopicName = deviceName + "/mode";
     var targetTopicName = deviceName + "/target";
-    var heatRequestTopicName = deviceName + "/heat_request";
     var hysteresisTopicName = deviceName + "/hysteresis";
     var inletTopicName = deviceName + "/inlet_temperature";
     var outletTopicName = deviceName + "/outlet_temperature";
@@ -229,12 +213,11 @@ function makePoolHeatController(
             return;
         }
 
-        var heatRequest = dev[heatRequestTopicName];
         var power = dev[heaterPowerTopicName];
         var deltaValid = dev[deltaValidTopicName];
         var delta = dev[deltaTopicName];
 
-        var isHeating = (heatRequest === HEAT_REQUEST_HEATING) &&
+        var isHeating = (dev[statusTopicName] === STATUS_HEATING) &&
                         (typeof power === "number" && !isNaN(power) && power > 0) &&
                         (deltaValid === true) &&
                         (delta > 0);
@@ -255,26 +238,19 @@ function makePoolHeatController(
         var outletTemperature = dev[outletTemperatureTopicName];
         var outletOffset = dev[outletOffsetTopicName];
         var temperaturesValid = dev[temperaturesValidTopicName];
-        var oldHeatRequest = dev[heatRequestTopicName];
-        var newHeatRequest = oldHeatRequest;
         var newStatus = dev[statusTopicName];
 
         if (!isValidFiltrationMode(poolFiltrationMode)) {
             log.warning("[pool-heat-ctrl-{}] filtration mode unavailable", name);
-            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_ERROR_NO_FILTRATION_DATA;
         } else if (!isValidTemperature(inletTemperature) || dev[inletTemperatureOkTopicName] !== true) {
             log.warning("[pool-heat-ctrl-{}] invalid inlet temperature or sensor error", name);
-            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_ERROR_SENSOR;
         } else if (mode !== 1) {
-            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_OFF;
         } else if (!isFiltrationActive(poolFiltrationMode)) {
-            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_STANDBY;
         } else if (!temperaturesValid) {
-            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_TEMPERATURES_INVALID;
         } else {
             var targetTemperature = dev[targetTopicName];
@@ -284,20 +260,21 @@ function makePoolHeatController(
                 hysteresis = defaultHysteresis;
             }
             if (inletTemperature < (targetTemperature - hysteresis)) {
-                newHeatRequest = HEAT_REQUEST_HEATING;
                 newStatus = STATUS_HEATING;
             } else if (inletTemperature > (targetTemperature + hysteresis)) {
-                newHeatRequest = HEAT_REQUEST_IDLE;
                 newStatus = STATUS_IDLE;
             } else {
-                newHeatRequest = (oldHeatRequest === HEAT_REQUEST_HEATING) ? HEAT_REQUEST_HEATING : HEAT_REQUEST_IDLE;
-                newStatus = (newHeatRequest === HEAT_REQUEST_HEATING) ? STATUS_HEATING : STATUS_IDLE;
+                // в зоне гистерезиса — сохраняем предыдущий статус если он был HEATING или IDLE
+                var oldStatus = dev[statusTopicName];
+                if (oldStatus !== STATUS_HEATING && oldStatus !== STATUS_IDLE) {
+                    newStatus = STATUS_IDLE;
+                }
+                // иначе newStatus остаётся равным oldStatus
             }
         }
 
-        if (oldHeatRequest !== newHeatRequest) {
-            log.info("[pool-heat-ctrl-{}] heat_request: {} -> {}", name, oldHeatRequest, newHeatRequest);
-            dev[heatRequestTopicName] = newHeatRequest;
+        if (newStatus !== dev[statusTopicName]) {
+            log.info("[pool-heat-ctrl-{}] status: {} -> {}", name, dev[statusTopicName], newStatus);
         }
         dev[statusTopicName] = newStatus;
 
