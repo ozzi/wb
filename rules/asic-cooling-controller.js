@@ -23,5 +23,5 @@ function makeASICPoolHeatController(
 makeASICPoolHeatController(
     "outdoor",
     "pool-heat-ctrl-outdoor/heat_request",
-    ["ANTMINER T21-1", "ANTMINER T21-2"]
+    ["ANTMINER S21e"]
 );
