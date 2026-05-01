@@ -49,10 +49,20 @@ function makeASICPoolHeatController(
 
     function startAllASICs() {
         log("[asic-pool-heat-{}] starting all ASICs", name);
+        var anyStarted = false;
         for (var i = 0; i < asicDeviceNames.length; i++) {
-            dev[asicDeviceNames[i] + "/start_mining"] = true;
+            var asicDevice = asicDeviceNames[i];
+            var state = dev[asicDevice + "/state"];
+            if (state === "failure") {
+                log("[asic-pool-heat-{}] skipping {} — device is in failure state", name, asicDevice);
+                continue;
+            }
+            dev[asicDevice + "/start_mining"] = true;
+            anyStarted = true;
         }
-        dev[miningStartedAtTopicName] = Date.now();
+        if (anyStarted) {
+            dev[miningStartedAtTopicName] = Date.now();
+        }
     }
 
     function applyHeatRequest() {
