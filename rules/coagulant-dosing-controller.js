@@ -68,7 +68,7 @@ function makeCoagulantDosingController(
             total_volume: {
                 title: "total volume dosed",
                 type: "value",
-                unit: "л",
+                unit: "мл",
                 value: 0,
                 readonly: true
             },
@@ -175,11 +175,13 @@ function makeCoagulantDosingController(
         doseTimer = setTimeout(function () {
             doseTimer = null;
 
-            // Начисляем объём
-            var flowRate = dev[flowRateTopicName];
-            if (flowRate && flowRate > 0) {
+            // Начисляем объём чистого коагулянта (мл)
+            var flowRate      = dev[flowRateTopicName];
+            var concentration = dev[concentrationTopicName];
+            if (flowRate && flowRate > 0 && concentration && concentration > 0) {
                 var durationHours = duration / 3600;
-                dev[totalVolumeTopicName] += flowRate * durationHours;
+                // объём раствора (л) × концентрация (мл/л) = мл чистого коагулянта
+                dev[totalVolumeTopicName] += flowRate * durationHours * concentration;
             }
 
             stopDose();
