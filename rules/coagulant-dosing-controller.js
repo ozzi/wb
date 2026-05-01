@@ -5,7 +5,9 @@ function makeCoagulantDosingController(
     name,
     relayTopicName,
     filtrationModeTopicName,
-    levelSensorTopicName
+    levelSensorTopicName,
+    poolVolumeTopicName,
+    filtrationHoursTopicName
 ) {
     var deviceName = "coagulant-dosing-ctrl-" + name;
 
@@ -16,13 +18,6 @@ function makeCoagulantDosingController(
                 title: "enabled",
                 type: "switch",
                 value: true,
-                readonly: false
-            },
-            pool_volume: {
-                title: "pool volume",
-                type: "value",
-                unit: "м³",
-                value: 50,
                 readonly: false
             },
             dose_rate: {
@@ -37,13 +32,6 @@ function makeCoagulantDosingController(
                 type: "value",
                 unit: "мл коаг./л р-ра",
                 value: 100,
-                readonly: false
-            },
-            filtration_hours: {
-                title: "filtration hours per day",
-                type: "value",
-                unit: "ч/сут",
-                value: 8,
                 readonly: false
             },
             flow_rate: {
@@ -102,11 +90,9 @@ function makeCoagulantDosingController(
     });
 
     var enabledTopicName        = deviceName + "/enabled";
-    var poolVolumeTopicName     = deviceName + "/pool_volume";
     var doseRateTopicName       = deviceName + "/dose_rate";
     var concentrationTopicName  = deviceName + "/concentration";
-    var filtrationHoursTopicName = deviceName + "/filtration_hours";
-    var flowRateTopicName        = deviceName + "/flow_rate";
+    var flowRateTopicName       = deviceName + "/flow_rate";
     var doseDurationTopicName    = deviceName + "/dose_duration";
     var dosingActiveTopicName    = deviceName + "/dosing_active";
     var statusTopicName          = deviceName + "/status";
@@ -279,9 +265,9 @@ function makeCoagulantDosingController(
     defineRule("coagulant-params-changed-" + name, {
         whenChanged: [
             poolVolumeTopicName,
+            filtrationHoursTopicName,
             doseRateTopicName,
             concentrationTopicName,
-            filtrationHoursTopicName,
             flowRateTopicName
         ],
         then: function () {
@@ -334,5 +320,7 @@ var coagulantDosing = makeCoagulantDosingController(
     "outdoor",
     "wb-mr6cu_91/K4",
     "pool-filtration-ctrl-outdoor/mode",
-    undefined
+    undefined,
+    "pool-filtration-meter-outdoor/pool_volume",
+    "pool-filtration-schedule-outdoor/work_hours_per_day"
 );
