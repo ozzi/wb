@@ -11,9 +11,9 @@ function makeASICPoolHeatController(
             for (var i = 0; i < asicDeviceNames.length; i++) {
                 var asicDevice = asicDeviceNames[i];
                 if (heatRequest) {
-                    dev[asicDevice + "/selected_preset"] = "optimal";
+                    dev[asicDevice + "/start_mining"] = true;
                 } else {
-                    dev[asicDevice + "/selected_preset"] = "0";
+                    dev[asicDevice + "/stop_mining"] = true;
                 }
             }
         }
