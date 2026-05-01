@@ -2,7 +2,9 @@ function makeSekoDosingController(
     name,
     relayTopicName,
     filtrationModeTopicName,
-    alarmTopicName
+    alarmTopicName,
+    phMinusSensorTopicName,
+    chlorineSensorTopicName
 ) {
     var deviceName = "seko-dosing-ctrl-" + name;
 
@@ -45,6 +47,18 @@ function makeSekoDosingController(
                 type: "text",
                 value: "idle",
                 readonly: true
+            },
+            ph_minus_empty: {
+                title: "ph minus empty",
+                type: "switch",
+                value: false,
+                readonly: true
+            },
+            chlorine_empty: {
+                title: "chlorine empty",
+                type: "switch",
+                value: false,
+                readonly: true
             }
         }
     });
@@ -53,7 +67,9 @@ function makeSekoDosingController(
     var bathingDurationTopicName = deviceName + "/bathing_duration";
     var bathingRemainingTopicName = deviceName + "/bathing_remaining";
     var dosingActiveTopicName    = deviceName + "/dosing_active";
-    var statusTopicName          = deviceName + "/status";
+    var statusTopicName           = deviceName + "/status";
+    var phMinusEmptyTopicName     = deviceName + "/ph_minus_empty";
+    var chlorineEmptyTopicName    = deviceName + "/chlorine_empty";
 
     var bathingTimer     = null;
     var bathingTickTimer = null;
@@ -165,6 +181,30 @@ function makeSekoDosingController(
         });
     }
 
+    if (phMinusSensorTopicName) {
+        defineRule("dosing-ph-minus-changed-" + name, {
+            whenChanged: [phMinusSensorTopicName],
+            then: function (newValue) {
+                dev[phMinusEmptyTopicName] = (newValue === true);
+                if (newValue === true) {
+                    log.warning("[seko-dosing-ctrl-{}] ph minus canister is empty", name);
+                }
+            }
+        });
+    }
+
+    if (chlorineSensorTopicName) {
+        defineRule("dosing-chlorine-changed-" + name, {
+            whenChanged: [chlorineSensorTopicName],
+            then: function (newValue) {
+                dev[chlorineEmptyTopicName] = (newValue === true);
+                if (newValue === true) {
+                    log.warning("[seko-dosing-ctrl-{}] chlorine canister is empty", name);
+                }
+            }
+        });
+    }
+
     return {
         modeTopicName: modeTopicName
     };
@@ -176,5 +216,7 @@ var dosing = makeSekoDosingController(
     "outdoor",
     "wbio-ssr8/K1",
     "pool-filtration-ctrl-outdoor/mode",
-    "wb-mcm8_238/Input 5"
+    "wb-mcm8_238/Input 5",
+    "wb-mcm8_238/Input 6",
+    "wb-mcm8_238/Input 7"
 );
