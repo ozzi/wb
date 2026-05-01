@@ -6,7 +6,8 @@ function makeSekoDosingController(
     phMinusSensorTopicName,
     chlorineSensorTopicName,
     phPumpSensorTopicName,
-    chlorinePumpSensorTopicName
+    chlorinePumpSensorTopicName,
+    attractionTopicNames
 ) {
     var deviceName = "seko-dosing-ctrl-" + name;
 
@@ -514,6 +515,20 @@ function makeSekoDosingController(
         }
     });
 
+    if (attractionTopicNames && attractionTopicNames.length > 0) {
+        defineRule("dosing-attraction-changed-" + name, {
+            whenChanged: attractionTopicNames,
+            then: function (newValue) {
+                if (newValue !== true) { return; }
+                // Включился аттракцион — активируем режим купания если ещё не активен
+                if (dev[modeTopicName] !== 2) {
+                    log.info("[seko-dosing-ctrl-{}] attraction activated, starting bathing mode", name);
+                    dev[modeTopicName] = 2;
+                }
+            }
+        });
+    }
+
     defineRule("calibration-check-" + name, {
         when: cron("@every 1h"),
         then: function () {
@@ -536,5 +551,10 @@ var dosing = makeSekoDosingController(
     "outdoor",
     "wb-mio-gpio_17:1/K3",
     "pool-filtration-ctrl-outdoor/mode",
-    "wb-mcm8_238/Input 5"
+    "wb-mcm8_238/Input 5",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    ["wb-mr6cu_91/K5"]
 );
