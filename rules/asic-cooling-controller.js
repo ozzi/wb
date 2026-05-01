@@ -5,10 +5,31 @@ var HEAT_REQUEST_STOP    = 2;
 function makeASICPoolHeatController(
     name,
     poolHeatRequestTopicName,
-    asicDeviceNames,
-    minRunMinutes
+    asicDeviceNames
 ) {
-    var miningStartedAt = null;
+    var deviceName = "asic-pool-heat-ctrl-" + name;
+
+    defineVirtualDevice(deviceName, {
+        title: "ASIC Pool Heat Controller - " + name,
+        cells: {
+            min_run_minutes: {
+                title: "min run minutes",
+                type: "value",
+                value: 30,
+                readonly: false
+            },
+            mining_started_at: {
+                title: "mining started at (ms)",
+                type: "value",
+                value: 0,
+                readonly: true
+            }
+        }
+    });
+
+    var minRunMinutesTopicName = deviceName + "/min_run_minutes";
+    var miningStartedAtTopicName = deviceName + "/mining_started_at";
+
     var stopTimer = null;
 
     function cancelStopTimer() {
@@ -23,7 +44,7 @@ function makeASICPoolHeatController(
         for (var i = 0; i < asicDeviceNames.length; i++) {
             dev[asicDeviceNames[i] + "/stop_mining"] = true;
         }
-        miningStartedAt = null;
+        dev[miningStartedAtTopicName] = 0;
     }
 
     function startAllASICs() {
@@ -31,7 +52,7 @@ function makeASICPoolHeatController(
         for (var i = 0; i < asicDeviceNames.length; i++) {
             dev[asicDeviceNames[i] + "/start_mining"] = true;
         }
-        miningStartedAt = Date.now();
+        dev[miningStartedAtTopicName] = Date.now();
     }
 
     function applyHeatRequest() {
@@ -45,10 +66,12 @@ function makeASICPoolHeatController(
             cancelStopTimer();
             stopAllASICs();
         } else if (heatRequest === HEAT_REQUEST_IDLE) {
-            if (miningStartedAt === null) {
+            var miningStartedAt = dev[miningStartedAtTopicName];
+            if (!miningStartedAt || miningStartedAt === 0) {
                 stopAllASICs();
                 return;
             }
+            var minRunMinutes = dev[minRunMinutesTopicName];
             var elapsed = (Date.now() - miningStartedAt) / 60000;
             var remaining = minRunMinutes - elapsed;
             if (remaining <= 0) {
@@ -77,6 +100,5 @@ function makeASICPoolHeatController(
 makeASICPoolHeatController(
     "outdoor",
     "pool-heat-ctrl-outdoor/heat_request",
-    ["ANTMINER S21e"],
-    30
+    ["ANTMINER S21e"]
 );
