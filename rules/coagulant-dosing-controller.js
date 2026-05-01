@@ -76,12 +76,6 @@ function makeCoagulantDosingController(
                 title: "reset total volume",
                 type: "pushbutton",
                 readonly: false
-            },
-            canister_empty: {
-                title: "canister empty",
-                type: "switch",
-                value: false,
-                readonly: true
             }
         }
     });
@@ -96,7 +90,8 @@ function makeCoagulantDosingController(
     var statusTopicName         = deviceName + "/status";
     var totalVolumeTopicName    = deviceName + "/total_volume";
     var resetBtnTopicName       = deviceName + "/reset_btn";
-    var canisterEmptyTopicName  = deviceName + "/canister_empty";
+
+    var canisterEmpty = false;
 
     var doseTimer     = null;
     var intervalTimer = null;
@@ -129,14 +124,32 @@ function makeCoagulantDosingController(
         return durationSec;
     }
 
+    function applyStatus() {
+        var filtrationMode = dev[filtrationModeTopicName];
+        var enabled        = dev[enabledTopicName];
+        var dosing         = dev[dosingActiveTopicName];
+
+        if (!enabled) {
+            dev[statusTopicName] = "disabled";
+        } else if (canisterEmpty) {
+            dev[statusTopicName] = "canister_empty";
+        } else if (dosing) {
+            dev[statusTopicName] = "dosing";
+        } else if (filtrationMode === 1) {
+            dev[statusTopicName] = "waiting";
+        } else {
+            dev[statusTopicName] = "idle";
+        }
+    }
+
     function stopDose() {
         if (doseTimer !== null) {
             clearTimeout(doseTimer);
             doseTimer = null;
         }
-        dev[relayTopicName]      = false;
+        dev[relayTopicName]        = false;
         dev[dosingActiveTopicName] = false;
-        dev[statusTopicName]     = "idle";
+        applyStatus();
     }
 
     function startDose() {
@@ -157,7 +170,7 @@ function makeCoagulantDosingController(
 
         dev[relayTopicName]        = true;
         dev[dosingActiveTopicName] = true;
-        dev[statusTopicName]       = "dosing";
+        applyStatus();
 
         doseTimer = setTimeout(function () {
             doseTimer = null;
@@ -195,7 +208,7 @@ function makeCoagulantDosingController(
                 clearInterval(intervalTimer);
                 intervalTimer = null;
             }
-            dev[statusTopicName] = "idle";
+            applyStatus();
             return;
         }
 
@@ -234,10 +247,11 @@ function makeCoagulantDosingController(
         defineRule("coagulant-level-sensor-changed-" + name, {
             whenChanged: [levelSensorTopicName],
             then: function (newValue) {
-                dev[canisterEmptyTopicName] = (newValue === true);
+                canisterEmpty = (newValue === true);
                 if (newValue === true) {
                     log.warning("[coagulant-dosing-ctrl-{}] coagulant canister is empty", name);
                 }
+                applyStatus();
             }
         });
     }
@@ -253,6 +267,7 @@ function makeCoagulantDosingController(
     // Инициализация
     calcAndApplyDoseDuration();
     applyState();
+    applyStatus();
 
     return {
         dosingActiveTopicName: dosingActiveTopicName
