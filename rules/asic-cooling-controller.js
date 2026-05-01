@@ -16,7 +16,7 @@ function makeASICCoolingController(name, asicDeviceNames) {
             intent: {
                 title: "intent",
                 type: "text",
-                value: "force_stop",
+                value: "",
                 readonly: false
             },
             min_run_minutes: {
@@ -57,7 +57,6 @@ function makeASICCoolingController(name, asicDeviceNames) {
 
     function startAllASICs() {
         log("[asic-cooling-{}] starting all ASICs", name);
-        var anyStarted = false;
         for (var i = 0; i < asicDeviceNames.length; i++) {
             var asicDevice = asicDeviceNames[i];
             var state = dev[asicDevice + "/state"];
@@ -66,10 +65,6 @@ function makeASICCoolingController(name, asicDeviceNames) {
                 continue;
             }
             dev[asicDevice + "/start_mining"] = true;
-            anyStarted = true;
-        }
-        if (anyStarted && (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0)) {
-            dev[miningStartedAtTopicName] = Date.now();
         }
     }
 
@@ -77,7 +72,10 @@ function makeASICCoolingController(name, asicDeviceNames) {
         var intent = dev[intentTopicName];
         log("[asic-cooling-{}] intent = {}", name, intent);
 
-        if (intent === "heat") {
+        if (intent === "") {
+            // Пустое значение при старте — ничего не делаем
+            return;
+        } else if (intent === "heat") {
             cancelStopTimer();
             if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
                 dev[miningStartedAtTopicName] = Date.now();
@@ -116,7 +114,7 @@ function makeASICCoolingController(name, asicDeviceNames) {
         }
     });
 
-    applyIntent();
+    // Не вызываем applyIntent() при старте — intent="" означает "ничего не делать"
 }
 
 makeASICCoolingController(

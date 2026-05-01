@@ -56,9 +56,8 @@ function makePoolHeatSourceController(
             dev[asicIntentTopicName] = "force_stop";
             if (heatRequest === POOL_STATUS_HEATING) {
                 startBoiler();
-            } else if (heatRequest === POOL_STATUS_WAITING_SETTLE) {
-                log("[pool-heat-source-{}] boiler mode: waiting for temperature settle, doing nothing", name);
             } else {
+                // WAITING_SETTLE, IDLE, OFF, STANDBY, ERROR — котёл останавливаем
                 stopBoiler();
             }
             return;
@@ -86,7 +85,8 @@ function makePoolHeatSourceController(
         }
     });
 
-    applyHeatRequest();
+    // Не вызываем applyHeatRequest() при старте — состояние восстановится
+    // через defineRule когда придут retained-значения из MQTT
 }
 
 makePoolHeatSourceController(

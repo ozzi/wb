@@ -308,6 +308,8 @@ function makePoolHeatController(
         }
     });
 
+    // TODO: если heat_source = 1 (электрокотёл), heaterPowerTopicName указывает на мощность ASIC,
+    // что не отражает реальную мощность нагрева. Учёт энергии в этом режиме будет некорректным.
     setInterval(function () {
         tickEnergy();
     }, 60 * 1000);
