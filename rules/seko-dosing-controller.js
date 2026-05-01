@@ -539,11 +539,7 @@ function makeSekoDosingController(
 
 var dosing = makeSekoDosingController(
     "outdoor",
-    "wbio-ssr8/K1",
+    "wb-mio-gpio_17:1/K3",
     "pool-filtration-ctrl-outdoor/mode",
-    "wb-mcm8_238/Input 5",
-    "wb-mcm8_238/Input 6",
-    "wb-mcm8_238/Input 7",
-    "wb-mcm8_238/Input 8",
-    "wb-mcm8_238/Input 9"
+    "wb-mcm8_238/Input 5"
 );
