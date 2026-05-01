@@ -245,10 +245,12 @@ function makeSekoDosingController(
 
         if (bathingRemaining > 0) {
             dev[statusTopicName] = "bathing";
-        } else if (alarm === true) {
-            dev[statusTopicName] = "alarm";
         } else if (!dosingActive) {
             dev[statusTopicName] = "idle";
+        } else if (alarm === true) {
+            // Аварию показываем только если дозирование было активно —
+            // при отключении реле станция сама уходит в аварию (нет протока)
+            dev[statusTopicName] = "alarm";
         } else {
             dev[statusTopicName] = "ok";
         }
@@ -322,6 +324,9 @@ function makeSekoDosingController(
         defineRule("dosing-alarm-changed-" + name, {
             whenChanged: [alarmTopicName],
             then: function (newValue) {
+                // Игнорируем аварию если дозирование не активно —
+                // станция уходит в аварию когда мы сами отключаем реле (нет протока)
+                if (!dev[dosingActiveTopicName]) { return; }
                 if (newValue === true) {
                     log.warning("[seko-dosing-ctrl-{}] alarm signal received from station", name);
                 }
