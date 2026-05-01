@@ -9,13 +9,10 @@ var POOL_STATUS_WAITING_SETTLE = 6;
 function makePoolHeatSourceController(
     name,
     poolHeatRequestTopicName,
-    asicDeviceNames,
+    asicIntentTopicName,
     boilerRelayTopicName
 ) {
     var deviceName = "pool-heat-source-ctrl-" + name;
-    var asicIntentTopicName = "asic-cooling-ctrl-" + name + "/intent";
-
-    makeASICCoolingController(name, asicDeviceNames);
 
     defineVirtualDevice(deviceName, {
         title: "Pool Heat Source Controller - " + name,
@@ -95,6 +92,6 @@ function makePoolHeatSourceController(
 makePoolHeatSourceController(
     "outdoor",
     "pool-heat-ctrl-outdoor/status",
-    ["ANTMINER S21e"],
+    "asic-cooling-ctrl-outdoor/intent",
     "wb-mr6cu_XX/K1"  // TODO: заменить на реальный топик реле электрокотла
 );

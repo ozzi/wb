@@ -118,3 +118,8 @@ function makeASICCoolingController(name, asicDeviceNames) {
 
     applyIntent();
 }
+
+makeASICCoolingController(
+    "outdoor",
+    ["ANTMINER S21e"]
+);
