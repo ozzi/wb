@@ -239,8 +239,6 @@ function makeSekoDosingController(
     }
 
     function applyStatus() {
-        var mode             = dev[modeTopicName];
-        var filtrationMode   = dev[filtrationModeTopicName];
         var bathingRemaining = dev[bathingRemainingTopicName];
         var dosingActive     = dev[dosingActiveTopicName];
 
@@ -358,8 +356,8 @@ function makeSekoDosingController(
     // --- Мониторинг насосов дозирования ---
 
     // Храним историю состояний за последний час: массив объектов {ts, state}
-    var phPumpHistory      = [];
-    var chlorinePumpHistory = [];
+    var phPumpHistory       = phPumpSensorTopicName      ? [] : null;
+    var chlorinePumpHistory = chlorinePumpSensorTopicName ? [] : null;
 
     function cleanupHistory(history) {
         var cutoff = Date.now() - 3600000;
@@ -408,7 +406,7 @@ function makeSekoDosingController(
             then: function (newValue) {
                 onPumpChanged(
                     newValue,
-                    phPumpHistory,
+                    phPumpHistory,  // не null, т.к. phPumpSensorTopicName задан
                     phPumpDailyRuntimeTopicName,
                     phPumpTotalVolumeTopicName,
                     phPumpFlowRateTopicName
@@ -448,26 +446,32 @@ function makeSekoDosingController(
         });
     }
 
-    defineRule("pump-duty-cycle-tick-" + name, {
-        when: cron("@every 1m"),
-        then: function () {
-            if (phPumpSensorTopicName) {
-                dev[phPumpDutyCycleTopicName] = calcDutyCycle(phPumpHistory);
+    if (phPumpSensorTopicName || chlorinePumpSensorTopicName) {
+        defineRule("pump-duty-cycle-tick-" + name, {
+            when: cron("@every 1m"),
+            then: function () {
+                if (phPumpSensorTopicName) {
+                    dev[phPumpDutyCycleTopicName] = calcDutyCycle(phPumpHistory);
+                }
+                if (chlorinePumpSensorTopicName) {
+                    dev[chlorinePumpDutyCycleTopicName] = calcDutyCycle(chlorinePumpHistory);
+                }
             }
-            if (chlorinePumpSensorTopicName) {
-                dev[chlorinePumpDutyCycleTopicName] = calcDutyCycle(chlorinePumpHistory);
-            }
-        }
-    });
+        });
 
-    defineRule("pump-daily-reset-" + name, {
-        when: cron("0 0 * * *"),
-        then: function () {
-            dev[phPumpDailyRuntimeTopicName]      = 0;
-            dev[chlorinePumpDailyRuntimeTopicName] = 0;
-            log.info("[seko-dosing-ctrl-{}] daily pump runtime reset", name);
-        }
-    });
+        defineRule("pump-daily-reset-" + name, {
+            when: cron("0 0 * * *"),
+            then: function () {
+                if (phPumpSensorTopicName) {
+                    dev[phPumpDailyRuntimeTopicName] = 0;
+                }
+                if (chlorinePumpSensorTopicName) {
+                    dev[chlorinePumpDailyRuntimeTopicName] = 0;
+                }
+                log.info("[seko-dosing-ctrl-{}] daily pump runtime reset", name);
+            }
+        });
+    }
 
     function checkCalibration() {
         var now = Date.now();
