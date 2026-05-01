@@ -10,173 +10,187 @@ function makeSekoDosingController(
 ) {
     var deviceName = "seko-dosing-ctrl-" + name;
 
+    var cells = {
+        mode: {
+            title: "mode",
+            type: "value",
+            value: 0,
+            readonly: false,
+            enum: {
+                0: { en: "Allowed",    ru: "Разрешено" },
+                1: { en: "Prohibited", ru: "Запрещено" },
+                2: { en: "Bathing",    ru: "Купание" }
+            }
+        },
+        bathing_duration: {
+            title: "bathing duration",
+            type: "value",
+            unit: "мин",
+            value: 30,
+            readonly: false
+        },
+        bathing_remaining: {
+            title: "bathing remaining",
+            type: "value",
+            unit: "мин",
+            value: 0,
+            readonly: true
+        },
+        dosing_active: {
+            title: "dosing active",
+            type: "switch",
+            value: false,
+            readonly: true
+        },
+        status: {
+            title: "status",
+            type: "text",
+            value: "idle",
+            readonly: true
+        },
+        ph_calibration_interval: {
+            title: "ph calibration interval",
+            type: "value",
+            unit: "дн",
+            value: 30,
+            readonly: false
+        },
+        ph_calibrated_at: {
+            title: "ph calibrated at",
+            type: "value",
+            value: 0,
+            readonly: true
+        },
+        ph_needs_calibration: {
+            title: "ph needs calibration",
+            type: "switch",
+            value: false,
+            readonly: true
+        },
+        ph_calibrate_btn: {
+            title: "ph calibrated",
+            type: "pushbutton",
+            readonly: false
+        },
+        redox_calibration_interval: {
+            title: "redox calibration interval",
+            type: "value",
+            unit: "дн",
+            value: 30,
+            readonly: false
+        },
+        redox_calibrated_at: {
+            title: "redox calibrated at",
+            type: "value",
+            value: 0,
+            readonly: true
+        },
+        redox_needs_calibration: {
+            title: "redox needs calibration",
+            type: "switch",
+            value: false,
+            readonly: true
+        },
+        redox_calibrate_btn: {
+            title: "redox calibrated",
+            type: "pushbutton",
+            readonly: false
+        }
+    };
+
+    if (phMinusSensorTopicName) {
+        cells.ph_minus_empty = {
+            title: "ph minus empty",
+            type: "switch",
+            value: false,
+            readonly: true
+        };
+    }
+
+    if (chlorineSensorTopicName) {
+        cells.chlorine_empty = {
+            title: "chlorine empty",
+            type: "switch",
+            value: false,
+            readonly: true
+        };
+    }
+
+    if (phPumpSensorTopicName) {
+        cells.ph_pump_flow_rate = {
+            title: "ph pump flow rate",
+            type: "value",
+            unit: "л/ч",
+            value: 1.5,
+            readonly: false
+        };
+        cells.ph_pump_duty_cycle = {
+            title: "ph pump duty cycle",
+            type: "value",
+            unit: "%",
+            value: 0,
+            readonly: true
+        };
+        cells.ph_pump_daily_runtime = {
+            title: "ph pump daily runtime",
+            type: "value",
+            unit: "мин",
+            value: 0,
+            readonly: true
+        };
+        cells.ph_pump_total_volume = {
+            title: "ph pump total volume",
+            type: "value",
+            unit: "л",
+            value: 0,
+            readonly: true
+        };
+        cells.ph_pump_reset_btn = {
+            title: "ph pump reset total",
+            type: "pushbutton",
+            readonly: false
+        };
+    }
+
+    if (chlorinePumpSensorTopicName) {
+        cells.chlorine_pump_flow_rate = {
+            title: "chlorine pump flow rate",
+            type: "value",
+            unit: "л/ч",
+            value: 1.5,
+            readonly: false
+        };
+        cells.chlorine_pump_duty_cycle = {
+            title: "chlorine pump duty cycle",
+            type: "value",
+            unit: "%",
+            value: 0,
+            readonly: true
+        };
+        cells.chlorine_pump_daily_runtime = {
+            title: "chlorine pump daily runtime",
+            type: "value",
+            unit: "мин",
+            value: 0,
+            readonly: true
+        };
+        cells.chlorine_pump_total_volume = {
+            title: "chlorine pump total volume",
+            type: "value",
+            unit: "л",
+            value: 0,
+            readonly: true
+        };
+        cells.chlorine_pump_reset_btn = {
+            title: "chlorine pump reset total",
+            type: "pushbutton",
+            readonly: false
+        };
+    }
+
     defineVirtualDevice(deviceName, {
         title: "Seko Dosing Controller - " + name,
-        cells: {
-            mode: {
-                title: "mode",
-                type: "value",
-                value: 0,
-                readonly: false,
-                enum: {
-                    0: { en: "Allowed",    ru: "Разрешено" },
-                    1: { en: "Prohibited", ru: "Запрещено" },
-                    2: { en: "Bathing",    ru: "Купание" }
-                }
-            },
-            bathing_duration: {
-                title: "bathing duration",
-                type: "value",
-                unit: "мин",
-                value: 30,
-                readonly: false
-            },
-            bathing_remaining: {
-                title: "bathing remaining",
-                type: "value",
-                unit: "мин",
-                value: 0,
-                readonly: true
-            },
-            dosing_active: {
-                title: "dosing active",
-                type: "switch",
-                value: false,
-                readonly: true
-            },
-            status: {
-                title: "status",
-                type: "text",
-                value: "idle",
-                readonly: true
-            },
-            ph_minus_empty: {
-                title: "ph minus empty",
-                type: "switch",
-                value: false,
-                readonly: true
-            },
-            chlorine_empty: {
-                title: "chlorine empty",
-                type: "switch",
-                value: false,
-                readonly: true
-            },
-            ph_calibration_interval: {
-                title: "ph calibration interval",
-                type: "value",
-                unit: "дн",
-                value: 30,
-                readonly: false
-            },
-            ph_calibrated_at: {
-                title: "ph calibrated at",
-                type: "value",
-                value: 0,
-                readonly: true
-            },
-            ph_needs_calibration: {
-                title: "ph needs calibration",
-                type: "switch",
-                value: false,
-                readonly: true
-            },
-            ph_calibrate_btn: {
-                title: "ph calibrated",
-                type: "pushbutton",
-                readonly: false
-            },
-            redox_calibration_interval: {
-                title: "redox calibration interval",
-                type: "value",
-                unit: "дн",
-                value: 30,
-                readonly: false
-            },
-            redox_calibrated_at: {
-                title: "redox calibrated at",
-                type: "value",
-                value: 0,
-                readonly: true
-            },
-            redox_needs_calibration: {
-                title: "redox needs calibration",
-                type: "switch",
-                value: false,
-                readonly: true
-            },
-            redox_calibrate_btn: {
-                title: "redox calibrated",
-                type: "pushbutton",
-                readonly: false
-            },
-            ph_pump_flow_rate: {
-                title: "ph pump flow rate",
-                type: "value",
-                unit: "л/ч",
-                value: 1.5,
-                readonly: false
-            },
-            ph_pump_duty_cycle: {
-                title: "ph pump duty cycle",
-                type: "value",
-                unit: "%",
-                value: 0,
-                readonly: true
-            },
-            ph_pump_daily_runtime: {
-                title: "ph pump daily runtime",
-                type: "value",
-                unit: "мин",
-                value: 0,
-                readonly: true
-            },
-            ph_pump_total_volume: {
-                title: "ph pump total volume",
-                type: "value",
-                unit: "л",
-                value: 0,
-                readonly: true
-            },
-            ph_pump_reset_btn: {
-                title: "ph pump reset total",
-                type: "pushbutton",
-                readonly: false
-            },
-            chlorine_pump_flow_rate: {
-                title: "chlorine pump flow rate",
-                type: "value",
-                unit: "л/ч",
-                value: 1.5,
-                readonly: false
-            },
-            chlorine_pump_duty_cycle: {
-                title: "chlorine pump duty cycle",
-                type: "value",
-                unit: "%",
-                value: 0,
-                readonly: true
-            },
-            chlorine_pump_daily_runtime: {
-                title: "chlorine pump daily runtime",
-                type: "value",
-                unit: "мин",
-                value: 0,
-                readonly: true
-            },
-            chlorine_pump_total_volume: {
-                title: "chlorine pump total volume",
-                type: "value",
-                unit: "л",
-                value: 0,
-                readonly: true
-            },
-            chlorine_pump_reset_btn: {
-                title: "chlorine pump reset total",
-                type: "pushbutton",
-                readonly: false
-            }
-        }
+        cells: cells
     });
 
     var modeTopicName            = deviceName + "/mode";
