@@ -334,7 +334,7 @@ function makePoolFiltrationSchedule(
             if (scheduleMode == 0) { return; }
 
             var mode = dev[modeTopicName];
-            if (mode == 2) { return; }
+            if (mode == 2 || mode == 3) { return; }
 
             var timeWindowsStr = dev[scheduleTopicName];
 
