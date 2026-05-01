@@ -102,9 +102,14 @@ function makePoolHeatController(
             },
             heat_request: {
                 title: "heat request",
-                type: "switch",
-                value: false,
-                readonly: true
+                type: "value",
+                value: 2,
+                readonly: true,
+                enum: {
+                    0: {en: "Idle",    ru: "Ожидание"},
+                    1: {en: "Heating", ru: "Нагрев"},
+                    2: {en: "Stop",    ru: "Стоп"}
+                }
             },
             status: {
                 title: "status",
@@ -123,6 +128,10 @@ function makePoolHeatController(
             }
         }
     });
+
+    var HEAT_REQUEST_IDLE    = 0;
+    var HEAT_REQUEST_HEATING = 1;
+    var HEAT_REQUEST_STOP    = 2;
 
     var modeTopicName = deviceName + "/mode";
     var targetTopicName = deviceName + "/target";
@@ -225,7 +234,7 @@ function makePoolHeatController(
         var deltaValid = dev[deltaValidTopicName];
         var delta = dev[deltaTopicName];
 
-        var isHeating = (heatRequest === true) &&
+        var isHeating = (heatRequest === HEAT_REQUEST_HEATING) &&
                         (typeof power === "number" && !isNaN(power) && power > 0) &&
                         (deltaValid === true) &&
                         (delta > 0);
@@ -252,20 +261,20 @@ function makePoolHeatController(
 
         if (!isValidFiltrationMode(poolFiltrationMode)) {
             log.warning("[pool-heat-ctrl-{}] filtration mode unavailable", name);
-            newHeatRequest = false;
+            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_ERROR_NO_FILTRATION_DATA;
         } else if (!isValidTemperature(inletTemperature) || dev[inletTemperatureOkTopicName] !== true) {
             log.warning("[pool-heat-ctrl-{}] invalid inlet temperature or sensor error", name);
-            newHeatRequest = false;
+            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_ERROR_SENSOR;
         } else if (mode !== 1) {
-            newHeatRequest = false;
+            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_OFF;
         } else if (!isFiltrationActive(poolFiltrationMode)) {
-            newHeatRequest = false;
+            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_STANDBY;
         } else if (!temperaturesValid) {
-            newHeatRequest = false;
+            newHeatRequest = HEAT_REQUEST_STOP;
             newStatus = STATUS_TEMPERATURES_INVALID;
         } else {
             var targetTemperature = dev[targetTopicName];
@@ -275,17 +284,18 @@ function makePoolHeatController(
                 hysteresis = defaultHysteresis;
             }
             if (inletTemperature < (targetTemperature - hysteresis)) {
-                newHeatRequest = true;
+                newHeatRequest = HEAT_REQUEST_HEATING;
                 newStatus = STATUS_HEATING;
             } else if (inletTemperature > (targetTemperature + hysteresis)) {
-                newHeatRequest = false;
+                newHeatRequest = HEAT_REQUEST_IDLE;
                 newStatus = STATUS_IDLE;
             } else {
-                newStatus = newHeatRequest ? STATUS_HEATING : STATUS_IDLE;
+                newHeatRequest = (oldHeatRequest === HEAT_REQUEST_HEATING) ? HEAT_REQUEST_HEATING : HEAT_REQUEST_IDLE;
+                newStatus = (newHeatRequest === HEAT_REQUEST_HEATING) ? STATUS_HEATING : STATUS_IDLE;
             }
         }
 
-        if (oldHeatRequest != newHeatRequest) {
+        if (oldHeatRequest !== newHeatRequest) {
             log.info("[pool-heat-ctrl-{}] heat_request: {} -> {}", name, oldHeatRequest, newHeatRequest);
             dev[heatRequestTopicName] = newHeatRequest;
         }
