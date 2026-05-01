@@ -78,16 +78,8 @@ function makeASICPoolHeatController(
             }
             startAllASICs();
         } else if (heatRequest === POOL_STATUS_WAITING_SETTLE) {
-            // Фильтрация активна, ждём стабилизации температуры
-            // Если асик уже запущен — не трогаем. Если не запущен — запускаем заранее.
-            cancelStopTimer();
-            if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
-                log("[asic-pool-heat-{}] waiting for temperature settle, starting ASICs in advance", name);
-                dev[miningStartedAtTopicName] = Date.now();
-                startAllASICs();
-            } else {
-                log("[asic-pool-heat-{}] waiting for temperature settle, ASICs already running", name);
-            }
+            // Ждём стабилизации температуры после запуска фильтрации — асики не трогаем
+            log("[asic-pool-heat-{}] waiting for temperature settle, doing nothing", name);
         } else if (heatRequest === POOL_STATUS_IDLE) {
             var miningStartedAt = dev[miningStartedAtTopicName];
             if (!miningStartedAt || miningStartedAt === 0) {
