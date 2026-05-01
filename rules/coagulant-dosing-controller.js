@@ -124,8 +124,8 @@ function makeCoagulantDosingController(
             return 0;
         }
 
-        // Суточная норма чистого коагулянта (мл)
-        var dailyDoseMl = doseRate * poolVolume;
+        // Суточная норма чистого коагулянта (мл): poolVolume в литрах → делим на 1000 для м³
+        var dailyDoseMl = doseRate * (poolVolume / 1000);
         dev[dailyDoseTopicName] = Math.round(dailyDoseMl);
 
         // Количество доз в сутки = часы фильтрации (одна доза в час)
@@ -172,6 +172,12 @@ function makeCoagulantDosingController(
     }
 
     function startDose() {
+        // Защита от двойного запуска
+        if (doseTimer !== null) {
+            log.warning("[coagulant-dosing-ctrl-{}] dose already in progress, skipping", name);
+            return;
+        }
+
         var filtrationMode = dev[filtrationModeTopicName];
         var enabled        = dev[enabledTopicName];
 
@@ -243,9 +249,9 @@ function makeCoagulantDosingController(
             return;
         }
 
-        // Фильтрация активна — запускаем первую дозу сразу и планируем интервал
+        // Фильтрация активна — планируем интервал (первая доза через час)
         scheduleInterval();
-        startDose();
+        applyStatus();
     }
 
     defineRule("coagulant-filtration-changed-" + name, {
@@ -282,8 +288,10 @@ function makeCoagulantDosingController(
                 canisterEmpty = (newValue === true);
                 if (newValue === true) {
                     log.warning("[coagulant-dosing-ctrl-{}] coagulant canister is empty", name);
+                    stopDose();
+                } else {
+                    applyStatus();
                 }
-                applyStatus();
             }
         });
     }
