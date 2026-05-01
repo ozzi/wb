@@ -59,7 +59,7 @@ function makeASICPoolHeatController(
             dev[asicDevice + "/start_mining"] = true;
             anyStarted = true;
         }
-        if (anyStarted) {
+        if (anyStarted && (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0)) {
             dev[miningStartedAtTopicName] = Date.now();
         }
     }
@@ -70,11 +70,17 @@ function makeASICPoolHeatController(
 
         if (heatRequest === POOL_STATUS_HEATING) {
             cancelStopTimer();
+            // Если miningStartedAt не установлен — фиксируем текущее время
+            // (асик мог быть запущен до старта wb-rules)
+            if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
+                dev[miningStartedAtTopicName] = Date.now();
+            }
             startAllASICs();
         } else if (heatRequest === POOL_STATUS_IDLE) {
             var miningStartedAt = dev[miningStartedAtTopicName];
             if (!miningStartedAt || miningStartedAt === 0) {
-                // Асик никогда не запускался этим контроллером — ничего не делаем
+                // Асик никогда не запускался этим контроллером — останавливаем на всякий случай
+                stopAllASICs();
                 return;
             }
             var minRunMinutes = dev[minRunMinutesTopicName];
