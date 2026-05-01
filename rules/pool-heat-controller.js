@@ -190,7 +190,8 @@ function makePoolHeatController(
     function applyDeltaValid() {
         var temperaturesValid = dev[temperaturesValidTopicName];
         var outletOk = dev[outletTemperatureOkTopicName];
-        dev[deltaValidTopicName] = (temperaturesValid === true && outletOk === true);
+        var delta = dev[deltaTopicName];
+        dev[deltaValidTopicName] = (temperaturesValid === true && outletOk === true && typeof delta === "number" && !isNaN(delta) && delta > 0);
         applyFlowRate();
     }
 
@@ -317,7 +318,6 @@ function makePoolHeatController(
         ],
         then: function () {
             applyHeatState();
-            applyDeltaValid();
         }
     });
 
