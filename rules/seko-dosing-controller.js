@@ -59,6 +59,54 @@ function makeSekoDosingController(
                 type: "switch",
                 value: false,
                 readonly: true
+            },
+            ph_calibration_interval: {
+                title: "ph calibration interval",
+                type: "value",
+                unit: "дн",
+                value: 30,
+                readonly: false
+            },
+            ph_calibrated_at: {
+                title: "ph calibrated at",
+                type: "value",
+                value: 0,
+                readonly: true
+            },
+            ph_needs_calibration: {
+                title: "ph needs calibration",
+                type: "switch",
+                value: false,
+                readonly: true
+            },
+            ph_calibrate_btn: {
+                title: "ph calibrated",
+                type: "pushbutton",
+                readonly: false
+            },
+            redox_calibration_interval: {
+                title: "redox calibration interval",
+                type: "value",
+                unit: "дн",
+                value: 30,
+                readonly: false
+            },
+            redox_calibrated_at: {
+                title: "redox calibrated at",
+                type: "value",
+                value: 0,
+                readonly: true
+            },
+            redox_needs_calibration: {
+                title: "redox needs calibration",
+                type: "switch",
+                value: false,
+                readonly: true
+            },
+            redox_calibrate_btn: {
+                title: "redox calibrated",
+                type: "pushbutton",
+                readonly: false
             }
         }
     });
@@ -68,8 +116,16 @@ function makeSekoDosingController(
     var bathingRemainingTopicName = deviceName + "/bathing_remaining";
     var dosingActiveTopicName    = deviceName + "/dosing_active";
     var statusTopicName           = deviceName + "/status";
-    var phMinusEmptyTopicName     = deviceName + "/ph_minus_empty";
-    var chlorineEmptyTopicName    = deviceName + "/chlorine_empty";
+    var phMinusEmptyTopicName          = deviceName + "/ph_minus_empty";
+    var chlorineEmptyTopicName         = deviceName + "/chlorine_empty";
+    var phCalibrationIntervalTopicName = deviceName + "/ph_calibration_interval";
+    var phCalibratedAtTopicName        = deviceName + "/ph_calibrated_at";
+    var phNeedsCalibrationTopicName    = deviceName + "/ph_needs_calibration";
+    var phCalibrateBtnTopicName        = deviceName + "/ph_calibrate_btn";
+    var redoxCalibrationIntervalTopicName = deviceName + "/redox_calibration_interval";
+    var redoxCalibratedAtTopicName        = deviceName + "/redox_calibrated_at";
+    var redoxNeedsCalibrationTopicName    = deviceName + "/redox_needs_calibration";
+    var redoxCalibrateBtnTopicName        = deviceName + "/redox_calibrate_btn";
 
     var bathingTimer     = null;
     var bathingTickTimer = null;
@@ -204,6 +260,53 @@ function makeSekoDosingController(
             }
         });
     }
+
+    function checkCalibration() {
+        var now = Date.now();
+
+        var phCalibratedAt = dev[phCalibratedAtTopicName];
+        var phInterval     = dev[phCalibrationIntervalTopicName];
+        if (!phInterval || phInterval <= 0) { phInterval = 30; }
+        if (phCalibratedAt === 0) {
+            dev[phNeedsCalibrationTopicName] = true;
+        } else {
+            dev[phNeedsCalibrationTopicName] = (now - phCalibratedAt) >= phInterval * 86400000;
+        }
+
+        var redoxCalibratedAt = dev[redoxCalibratedAtTopicName];
+        var redoxInterval     = dev[redoxCalibrationIntervalTopicName];
+        if (!redoxInterval || redoxInterval <= 0) { redoxInterval = 30; }
+        if (redoxCalibratedAt === 0) {
+            dev[redoxNeedsCalibrationTopicName] = true;
+        } else {
+            dev[redoxNeedsCalibrationTopicName] = (now - redoxCalibratedAt) >= redoxInterval * 86400000;
+        }
+    }
+
+    defineRule("ph-calibrate-btn-" + name, {
+        whenChanged: [phCalibrateBtnTopicName],
+        then: function () {
+            dev[phCalibratedAtTopicName] = Date.now();
+            log.info("[seko-dosing-ctrl-{}] ph sensor calibrated", name);
+            checkCalibration();
+        }
+    });
+
+    defineRule("redox-calibrate-btn-" + name, {
+        whenChanged: [redoxCalibrateBtnTopicName],
+        then: function () {
+            dev[redoxCalibratedAtTopicName] = Date.now();
+            log.info("[seko-dosing-ctrl-{}] redox sensor calibrated", name);
+            checkCalibration();
+        }
+    });
+
+    defineRule("calibration-check-" + name, {
+        when: cron("@every 1h"),
+        then: function () {
+            checkCalibration();
+        }
+    });
 
     return {
         modeTopicName: modeTopicName
