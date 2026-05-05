@@ -76,21 +76,21 @@ function makePoolFiltrationController(
         }
     });
 
-    var modeTopicName = deviceName + "/mode";
-    var flowCheckDelayTopicName = deviceName + "/flow_check_delay";
-    var backwashDurationTopicName = deviceName + "/backwash_duration";
-    var rinseDurationTopicName = deviceName + "/rinse_duration";
-    var intentStartTopicName = deviceName + "/intent_start";
-    var intentStopTopicName = deviceName + "/intent_stop";
-    var intentServiceTopicName = deviceName + "/intent_service";
+    var modeTopicName               = deviceName + "/mode";
+    var flowCheckDelayTopicName     = deviceName + "/flow_check_delay";
+    var backwashDurationTopicName   = deviceName + "/backwash_duration";
+    var rinseDurationTopicName      = deviceName + "/rinse_duration";
+    var intentStartTopicName        = deviceName + "/intent_start";
+    var intentStopTopicName         = deviceName + "/intent_stop";
+    var intentServiceTopicName      = deviceName + "/intent_service";
     var intentBackwashStartTopicName = deviceName + "/intent_backwash_start";
-    var intentRinseStartTopicName = deviceName + "/intent_rinse_start";
+    var intentRinseStartTopicName   = deviceName + "/intent_rinse_start";
     var intentEmergencyStopTopicName = deviceName + "/intent_emergency_stop";
-    var intentResetTopicName = deviceName + "/intent_reset";
+    var intentResetTopicName        = deviceName + "/intent_reset";
 
     var flowCheckTimer = null;
-    var backwashTimer = null;
-    var rinseTimer = null;
+    var backwashTimer  = null;
+    var rinseTimer     = null;
 
     function cancelFlowCheckTimer() {
         if (flowCheckTimer !== null) {
@@ -136,18 +136,31 @@ function makePoolFiltrationController(
 
         dev[modeTopicName] = newMode;
 
-        if (newMode === 0 || newMode === 2 || newMode === 3) {
+        if (newMode === 0) {
+            // idle — насос выключаем
             if (dev[pumpSwitchTopicName] !== false) {
                 dev[pumpSwitchTopicName] = false;
             }
         } else if (newMode === 1) {
+            // run — включаем насос, запускаем проверку потока
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
             if (flowSensorTopicName) {
                 startFlowCheckTimer();
             }
+        } else if (newMode === 2) {
+            // service_wait — насос выключаем, краны не трогаем
+            if (dev[pumpSwitchTopicName] !== false) {
+                dev[pumpSwitchTopicName] = false;
+            }
+        } else if (newMode === 3) {
+            // fault — всегда выключаем насос
+            if (dev[pumpSwitchTopicName] !== false) {
+                dev[pumpSwitchTopicName] = false;
+            }
         } else if (newMode === 4) {
+            // backwash — насос выключен в service_wait, переключаем краны, включаем насос
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
@@ -158,6 +171,7 @@ function makePoolFiltrationController(
                 applyMode(2);
             }, bDuration * 1000);
         } else if (newMode === 5) {
+            // rinse — насос выключен в service_wait, переключаем краны, включаем насос
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
@@ -165,11 +179,12 @@ function makePoolFiltrationController(
             if (!rDuration || rDuration <= 0) { rDuration = 45; }
             rinseTimer = setTimeout(function () {
                 rinseTimer = null;
-                applyMode(1);
+                applyMode(2);
             }, rDuration * 1000);
         }
     }
 
+    // intent_start: idle → run, service_wait → run
     defineRule("intent-start-" + name, {
         whenChanged: [intentStartTopicName],
         then: function () {
@@ -180,6 +195,7 @@ function makePoolFiltrationController(
         }
     });
 
+    // intent_stop: run → idle
     defineRule("intent-stop-" + name, {
         whenChanged: [intentStopTopicName],
         then: function () {
@@ -190,13 +206,18 @@ function makePoolFiltrationController(
         }
     });
 
+    // intent_service: run/backwash/rinse → service_wait
     defineRule("intent-service-" + name, {
         whenChanged: [intentServiceTopicName],
         then: function () {
-            applyMode(2);
+            var mode = dev[modeTopicName];
+            if (mode === 1 || mode === 4 || mode === 5) {
+                applyMode(2);
+            }
         }
     });
 
+    // intent_backwash_start: service_wait → backwash
     defineRule("intent-backwash-start-" + name, {
         whenChanged: [intentBackwashStartTopicName],
         then: function () {
@@ -207,16 +228,18 @@ function makePoolFiltrationController(
         }
     });
 
+    // intent_rinse_start: service_wait → rinse
     defineRule("intent-rinse-start-" + name, {
         whenChanged: [intentRinseStartTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 2 || mode === 4) {
+            if (mode === 2) {
                 applyMode(5);
             }
         }
     });
 
+    // intent_emergency_stop: любой → fault
     defineRule("intent-emergency-stop-" + name, {
         whenChanged: [intentEmergencyStopTopicName],
         then: function () {
@@ -224,6 +247,7 @@ function makePoolFiltrationController(
         }
     });
 
+    // intent_reset: fault → idle
     defineRule("intent-reset-" + name, {
         whenChanged: [intentResetTopicName],
         then: function () {
@@ -234,18 +258,19 @@ function makePoolFiltrationController(
         }
     });
 
+    // Внешнее изменение реле — детектируем нештатные ситуации
     defineRule("pump-switch-changed-" + name, {
         whenChanged: [pumpSwitchTopicName],
         then: function (newValue) {
             var mode = dev[modeTopicName];
-            if (newValue == true) {
-                if (mode === 0) {
-                    applyMode(1);
-                } else if (mode !== 1 && mode !== 4 && mode !== 5) {
+            if (newValue === true) {
+                // Насос включился, а должен быть выключен
+                if (mode === 0 || mode === 2 || mode === 3) {
                     log.warning("[pool-filtration-ctrl-{}] unexpected pump ON in mode {} — going to fault", name, mode);
                     applyMode(3);
                 }
-            } else if (newValue == false) {
+            } else if (newValue === false) {
+                // Насос выключился, а должен работать
                 if (mode === 1 || mode === 4 || mode === 5) {
                     log.warning("[pool-filtration-ctrl-{}] unexpected pump OFF in mode {} — going to fault", name, mode);
                     applyMode(3);
@@ -275,12 +300,16 @@ function makePoolFiltrationController(
             then: function () {
                 var mode = dev[modeTopicName];
                 if (mode === 0 || mode === 1) {
+                    // idle/run → service_wait (насос выключается)
                     applyMode(2);
                 } else if (mode === 2) {
+                    // service_wait → rinse (насос выключен, краны переключаем, насос включаем)
                     applyMode(5);
                 } else if (mode === 4) {
-                    applyMode(5);
+                    // backwash → service_wait (выключаем насос)
+                    applyMode(2);
                 } else if (mode === 5) {
+                    // rinse → service_wait (выключаем насос)
                     applyMode(2);
                 }
             }
@@ -293,15 +322,20 @@ function makePoolFiltrationController(
             then: function () {
                 var mode = dev[modeTopicName];
                 if (mode === 0) {
+                    // idle → run
                     applyMode(1);
                 } else if (mode === 1) {
+                    // run → idle
                     applyMode(0);
                 } else if (mode === 2) {
+                    // service_wait → backwash (насос выключен, краны переключаем, насос включаем)
                     applyMode(4);
                 } else if (mode === 4) {
+                    // backwash → service_wait (выключаем насос)
                     applyMode(2);
                 } else if (mode === 5) {
-                    applyMode(1);
+                    // rinse → service_wait (выключаем насос)
+                    applyMode(2);
                 }
             }
         });
