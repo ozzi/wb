@@ -1,8 +1,8 @@
 function makePoolFiltrationController(
     name,
     pumpSwitchTopicName,
-    buttonDeviceName,
-    buttonControlName,
+    buttonSinglePressTopicName,
+    buttonLongPressTopicName,
     flowSensorTopicName
 ) {
     var deviceName = "pool-filtration-ctrl-" + name;
@@ -110,9 +110,9 @@ function makePoolFiltrationController(
         });
     }
 
-    if (buttonDeviceName && buttonControlName) {
+    if (buttonLongPressTopicName) {
         defineRule("backwash-long-press-" + name, {
-            whenChanged: [buttonDeviceName + "/" + buttonControlName + " Long Press Counter"],
+            whenChanged: [buttonLongPressTopicName],
             then: function () {
                 var mode = dev[modeTopicName];
                 if (mode == 2) {
@@ -122,9 +122,11 @@ function makePoolFiltrationController(
                 }
             }
         });
+    }
 
+    if (buttonSinglePressTopicName) {
         defineRule("backwash-single-press-" + name, {
-            whenChanged: [buttonDeviceName + "/" + buttonControlName + " Single Press Counter"],
+            whenChanged: [buttonSinglePressTopicName],
             then: function () {
                 var mode = dev[modeTopicName];
                 if (mode == 2) {
@@ -148,7 +150,7 @@ function makePoolFiltrationController(
 var ctrl = makePoolFiltrationController(
     "outdoor",
     "wb-mr6cu_91/K1",
-    "wb-mcm8_238",
-    "Input 3",
+    "wb-mcm8_238/Input 3 Single Press Counter",
+    "wb-mcm8_238/Input 3 Long Press Counter",
     "wb-mcm8_238/Input 2"
 );
