@@ -3,6 +3,7 @@ function makePoolFiltrationController(
     pumpSwitchTopicName,
     buttonSinglePressTopicName,
     buttonLongPressTopicName,
+    buttonDoublePressTopicName,
     flowSensorTopicName
 ) {
     var deviceName = "pool-filtration-ctrl-" + name;
@@ -76,17 +77,17 @@ function makePoolFiltrationController(
         }
     });
 
-    var modeTopicName               = deviceName + "/mode";
-    var flowCheckDelayTopicName     = deviceName + "/flow_check_delay";
-    var backwashDurationTopicName   = deviceName + "/backwash_duration";
-    var rinseDurationTopicName      = deviceName + "/rinse_duration";
-    var intentStartTopicName        = deviceName + "/intent_start";
-    var intentStopTopicName         = deviceName + "/intent_stop";
-    var intentServiceTopicName      = deviceName + "/intent_service";
+    var modeTopicName                = deviceName + "/mode";
+    var flowCheckDelayTopicName      = deviceName + "/flow_check_delay";
+    var backwashDurationTopicName    = deviceName + "/backwash_duration";
+    var rinseDurationTopicName       = deviceName + "/rinse_duration";
+    var intentStartTopicName         = deviceName + "/intent_start";
+    var intentStopTopicName          = deviceName + "/intent_stop";
+    var intentServiceTopicName       = deviceName + "/intent_service";
     var intentBackwashStartTopicName = deviceName + "/intent_backwash_start";
-    var intentRinseStartTopicName   = deviceName + "/intent_rinse_start";
+    var intentRinseStartTopicName    = deviceName + "/intent_rinse_start";
     var intentEmergencyStopTopicName = deviceName + "/intent_emergency_stop";
-    var intentResetTopicName        = deviceName + "/intent_reset";
+    var intentResetTopicName         = deviceName + "/intent_reset";
 
     var flowCheckTimer = null;
     var backwashTimer  = null;
@@ -340,6 +341,22 @@ function makePoolFiltrationController(
             }
         });
     }
+
+    if (buttonDoublePressTopicName) {
+        defineRule("double-press-" + name, {
+            whenChanged: [buttonDoublePressTopicName],
+            then: function () {
+                var mode = dev[modeTopicName];
+                if (mode === 2) {
+                    // service_wait → run (насос выключен, краны в положении run, включаем насос)
+                    applyMode(1);
+                } else if (mode === 3) {
+                    // fault → idle (сброс ошибки)
+                    applyMode(0);
+                }
+            }
+        });
+    }
 }
 
 // --- Точка входа ---
@@ -349,5 +366,6 @@ makePoolFiltrationController(
     "wb-mr6cu_91/K1",
     "wb-mcm8_238/Input 3 Single Press Counter",
     "wb-mcm8_238/Input 3 Long Press Counter",
+    "wb-mcm8_238/Input 3 Double Press Counter",
     "wb-mcm8_238/Input 2"
 );
