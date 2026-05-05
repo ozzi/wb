@@ -79,7 +79,7 @@ function sunriseSunsetSchedule(sunriseStr, sunsetStr, windows) {
     if (windows[WINDOW_MORNING] > 0) {
         var morningStart = sunRise;
         var morningEnd = morningStart + windows[WINDOW_MORNING];
-        result[WINDOW_MORNING] = [toTimeStr(morningStart), toTimeStr(morningEnd)];
+        result[WINDOW_MORNING] = [toTimeStr(morningStart), toTimeStr(morningEn)];
     }
 
     // День: середина между рассветом и закатом
@@ -155,7 +155,9 @@ function makePoolFiltrationSchedule(
     poolVolumeTopicName,
     pumpFlowRateTopicName,
     filterDiameterTopicName,
-    modeTopicName
+    modeTopicName,
+    intentStartTopicName,
+    intentStopTopicName
 ) {
     var deviceName = "pool-filtration-schedule-" + name;
 
@@ -334,13 +336,12 @@ function makePoolFiltrationSchedule(
             if (scheduleMode == 0) { return; }
 
             var mode = dev[modeTopicName];
-            if (mode == 2 || mode == 3) { return; }
+            if (mode == 2 || mode == 3 || mode == 4 || mode == 5) { return; }
 
             var timeWindowsStr = dev[scheduleTopicName];
 
-            // Если расписание пустое — выключаем насос
             if (!timeWindowsStr || timeWindowsStr === "") {
-                if (mode != 0) { dev[modeTopicName] = 0; }
+                if (mode == 1) { dev[intentStopTopicName] = 1; }
                 return;
             }
 
@@ -355,9 +356,9 @@ function makePoolFiltrationSchedule(
             }
 
             if (isInWindow) {
-                if (mode != 1) { dev[modeTopicName] = 1; }
+                if (mode == 0) { dev[intentStartTopicName] = 1; }
             } else {
-                if (mode != 0) { dev[modeTopicName] = 0; }
+                if (mode == 1) { dev[intentStopTopicName] = 1; }
             }
         }
     });
@@ -375,5 +376,7 @@ var sched = makePoolFiltrationSchedule(
     "pool-filtration-meter-outdoor/pool_volume",
     "pool-filtration-meter-outdoor/pump_flow_rate",
     "pool-filtration-meter-outdoor/filter_diameter",
-    "pool-filtration-ctrl-outdoor/mode"
+    ctrl.modeTopicName,
+    ctrl.intentStartTopicName,
+    ctrl.intentStopTopicName
 );

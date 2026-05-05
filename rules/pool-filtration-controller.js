@@ -300,7 +300,9 @@ function makePoolFiltrationController(
     }
 
     return {
-        modeTopicName: modeTopicName
+        modeTopicName: modeTopicName,
+        intentStartTopicName: intentStartTopicName,
+        intentStopTopicName: intentStopTopicName
     };
 }
 
