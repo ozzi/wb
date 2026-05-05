@@ -211,7 +211,7 @@ function makePoolFiltrationController(
         whenChanged: [intentRinseStartTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 2) {
+            if (mode === 2 || mode === 4) {
                 applyMode(5);
             }
         }
@@ -274,10 +274,14 @@ function makePoolFiltrationController(
             whenChanged: [buttonLongPressTopicName],
             then: function () {
                 var mode = dev[modeTopicName];
-                if (mode === 1 || mode === 0) {
+                if (mode === 0 || mode === 1) {
                     applyMode(2);
                 } else if (mode === 2) {
-                    applyMode(0);
+                    applyMode(5);
+                } else if (mode === 4) {
+                    applyMode(5);
+                } else if (mode === 5) {
+                    applyMode(2);
                 }
             }
         });
@@ -294,6 +298,10 @@ function makePoolFiltrationController(
                     applyMode(0);
                 } else if (mode === 2) {
                     applyMode(4);
+                } else if (mode === 4) {
+                    applyMode(2);
+                } else if (mode === 5) {
+                    applyMode(1);
                 }
             }
         });
