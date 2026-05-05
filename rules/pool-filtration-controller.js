@@ -174,7 +174,7 @@ function makePoolFiltrationController(
         whenChanged: [intentStartTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 0 || mode === 3) {
+            if (mode === 0 || mode === 2) {
                 applyMode(1);
             }
         }
@@ -184,7 +184,7 @@ function makePoolFiltrationController(
         whenChanged: [intentStopTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 1 || mode === 2) {
+            if (mode === 1) {
                 applyMode(0);
             }
         }
@@ -193,10 +193,7 @@ function makePoolFiltrationController(
     defineRule("intent-service-" + name, {
         whenChanged: [intentServiceTopicName],
         then: function () {
-            var mode = dev[modeTopicName];
-            if (mode === 0 || mode === 1) {
-                applyMode(2);
-            }
+            applyMode(2);
         }
     });
 
@@ -244,10 +241,6 @@ function makePoolFiltrationController(
             if (newValue == false) {
                 if (mode === 1 || mode === 4 || mode === 5) {
                     applyMode(0);
-                }
-            } else if (newValue == true) {
-                if (mode === 0 || mode === 3) {
-                    applyMode(1);
                 }
             }
         }
