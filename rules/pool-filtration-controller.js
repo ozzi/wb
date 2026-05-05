@@ -298,17 +298,11 @@ function makePoolFiltrationController(
             }
         });
     }
-
-    return {
-        modeTopicName: modeTopicName,
-        intentStartTopicName: intentStartTopicName,
-        intentStopTopicName: intentStopTopicName
-    };
 }
 
 // --- Точка входа ---
 
-var ctrl = makePoolFiltrationController(
+makePoolFiltrationController(
     "outdoor",
     "wb-mr6cu_91/K1",
     "wb-mcm8_238/Input 3 Single Press Counter",

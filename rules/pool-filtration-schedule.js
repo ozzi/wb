@@ -376,7 +376,7 @@ var sched = makePoolFiltrationSchedule(
     "pool-filtration-meter-outdoor/pool_volume",
     "pool-filtration-meter-outdoor/pump_flow_rate",
     "pool-filtration-meter-outdoor/filter_diameter",
-    ctrl.modeTopicName,
-    ctrl.intentStartTopicName,
-    ctrl.intentStopTopicName
+    "pool-filtration-ctrl-outdoor/mode",
+    "pool-filtration-ctrl-outdoor/intent_start",
+    "pool-filtration-ctrl-outdoor/intent_stop"
 );
