@@ -124,7 +124,7 @@ function makePoolFiltrationController(
             var hasFlow = dev[flowSensorTopicName];
             if (!hasFlow) {
                 log.warning("[pool-filtration-ctrl-{}] no flow detected after {}s — going to fault", name, delay);
-                dev[modeTopicName] = 3;
+                applyMode(3);
             }
         }, delay * 1000);
     }
@@ -288,7 +288,7 @@ function makePoolFiltrationController(
             whenChanged: [buttonSinglePressTopicName],
             then: function () {
                 var mode = dev[modeTopicName];
-                if (mode === 0 || mode === 3) {
+                if (mode === 0) {
                     applyMode(1);
                 } else if (mode === 1) {
                     applyMode(0);
