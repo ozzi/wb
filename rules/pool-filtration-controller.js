@@ -1,7 +1,8 @@
 function makePoolFiltrationController(
     name,
     pumpSwitchTopicName,
-    buttonTopicName,
+    buttonDeviceName,
+    buttonControlName,
     flowSensorTopicName
 ) {
     var deviceName = "pool-filtration-ctrl-" + name;
@@ -15,10 +16,10 @@ function makePoolFiltrationController(
                 value: 0,
                 readonly: false,
                 enum: {
-                    0: { en: "Off",       ru: "Выключено" },
+                    0: { en: "Off",        ru: "Выключено" },
                     1: { en: "Filtration", ru: "Фильтрация" },
-                    2: { en: "Backwash",  ru: "Обратная промывка" },
-                    3: { en: "Fault",     ru: "Ошибка" }
+                    2: { en: "Backwash",   ru: "Обратная промывка" },
+                    3: { en: "Fault",      ru: "Ошибка" }
                 }
             },
             flow_check_delay: {
@@ -101,19 +102,17 @@ function makePoolFiltrationController(
                 var mode = dev[modeTopicName];
                 if (mode !== 1) { return; }
                 if (newValue === false) {
-                    // Проток пропал во время фильтрации — запускаем таймер
                     startFlowCheckTimer();
                 } else {
-                    // Проток появился — сбрасываем таймер
                     cancelFlowCheckTimer();
                 }
             }
         });
     }
 
-    if (buttonTopicName) {
+    if (buttonDeviceName && buttonControlName) {
         defineRule("backwash-long-press-" + name, {
-            whenChanged: [buttonTopicName + "/Long Press Counter"],
+            whenChanged: [buttonDeviceName + "/" + buttonControlName + " Long Press Counter"],
             then: function () {
                 var mode = dev[modeTopicName];
                 if (mode == 2) {
@@ -125,7 +124,7 @@ function makePoolFiltrationController(
         });
 
         defineRule("backwash-single-press-" + name, {
-            whenChanged: [buttonTopicName + "/Single Press Counter"],
+            whenChanged: [buttonDeviceName + "/" + buttonControlName + " Single Press Counter"],
             then: function () {
                 var mode = dev[modeTopicName];
                 if (mode == 2) {
@@ -149,6 +148,7 @@ function makePoolFiltrationController(
 var ctrl = makePoolFiltrationController(
     "outdoor",
     "wb-mr6cu_91/K1",
-    "wb-mcm8_238/Input 3",
+    "wb-mcm8_238",
+    "Input 3",
     "wb-mcm8_238/Input 2"
 );
