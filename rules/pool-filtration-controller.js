@@ -238,9 +238,17 @@ function makePoolFiltrationController(
         whenChanged: [pumpSwitchTopicName],
         then: function (newValue) {
             var mode = dev[modeTopicName];
-            if (newValue == false) {
+            if (newValue == true) {
+                if (mode === 0) {
+                    applyMode(1);
+                } else if (mode !== 1 && mode !== 4 && mode !== 5) {
+                    log.warning("[pool-filtration-ctrl-{}] unexpected pump ON in mode {} — going to fault", name, mode);
+                    applyMode(3);
+                }
+            } else if (newValue == false) {
                 if (mode === 1 || mode === 4 || mode === 5) {
-                    applyMode(0);
+                    log.warning("[pool-filtration-ctrl-{}] unexpected pump OFF in mode {} — going to fault", name, mode);
+                    applyMode(3);
                 }
             }
         }
