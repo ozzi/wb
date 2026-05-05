@@ -45,11 +45,33 @@ function makePoolFiltrationController(
                 value: 45,
                 readonly: false
             },
-            intent: {
-                title: "intent",
-                type: "text",
-                value: "",
-                readonly: false
+            intent_start: {
+                title: "START",
+                type: "pushbutton"
+            },
+            intent_stop: {
+                title: "STOP",
+                type: "pushbutton"
+            },
+            intent_service: {
+                title: "SERVICE",
+                type: "pushbutton"
+            },
+            intent_backwash_start: {
+                title: "BACKWASH START",
+                type: "pushbutton"
+            },
+            intent_rinse_start: {
+                title: "RINSE START",
+                type: "pushbutton"
+            },
+            intent_emergency_stop: {
+                title: "EMERGENCY STOP",
+                type: "pushbutton"
+            },
+            intent_reset: {
+                title: "RESET",
+                type: "pushbutton"
             }
         }
     });
@@ -58,7 +80,13 @@ function makePoolFiltrationController(
     var flowCheckDelayTopicName = deviceName + "/flow_check_delay";
     var backwashDurationTopicName = deviceName + "/backwash_duration";
     var rinseDurationTopicName = deviceName + "/rinse_duration";
-    var intentTopicName = deviceName + "/intent";
+    var intentStartTopicName = deviceName + "/intent_start";
+    var intentStopTopicName = deviceName + "/intent_stop";
+    var intentServiceTopicName = deviceName + "/intent_service";
+    var intentBackwashStartTopicName = deviceName + "/intent_backwash_start";
+    var intentRinseStartTopicName = deviceName + "/intent_rinse_start";
+    var intentEmergencyStopTopicName = deviceName + "/intent_emergency_stop";
+    var intentResetTopicName = deviceName + "/intent_reset";
 
     var flowCheckTimer = null;
     var backwashTimer = null;
@@ -142,40 +170,69 @@ function makePoolFiltrationController(
         }
     }
 
-    defineRule("intent-changed-" + name, {
-        whenChanged: [intentTopicName],
-        then: function (newValue) {
-            if (newValue === "") { return; }
-            dev[intentTopicName] = "";
-
+    defineRule("intent-start-" + name, {
+        whenChanged: [intentStartTopicName],
+        then: function () {
             var mode = dev[modeTopicName];
+            if (mode === 0 || mode === 3) {
+                applyMode(1);
+            }
+        }
+    });
 
-            if (newValue === "START") {
-                if (mode === 0 || mode === 3) {
-                    applyMode(1);
-                }
-            } else if (newValue === "STOP") {
-                if (mode === 1 || mode === 2) {
-                    applyMode(0);
-                }
-            } else if (newValue === "SERVICE") {
-                if (mode === 1 || mode === 0) {
-                    applyMode(2);
-                }
-            } else if (newValue === "BACKWASH_START") {
-                if (mode === 2) {
-                    applyMode(4);
-                }
-            } else if (newValue === "RINSE_START") {
-                if (mode === 2) {
-                    applyMode(5);
-                }
-            } else if (newValue === "EMERGENCY_STOP") {
-                applyMode(3);
-            } else if (newValue === "RESET") {
-                if (mode === 3) {
-                    applyMode(0);
-                }
+    defineRule("intent-stop-" + name, {
+        whenChanged: [intentStopTopicName],
+        then: function () {
+            var mode = dev[modeTopicName];
+            if (mode === 1 || mode === 2) {
+                applyMode(0);
+            }
+        }
+    });
+
+    defineRule("intent-service-" + name, {
+        whenChanged: [intentServiceTopicName],
+        then: function () {
+            var mode = dev[modeTopicName];
+            if (mode === 0 || mode === 1) {
+                applyMode(2);
+            }
+        }
+    });
+
+    defineRule("intent-backwash-start-" + name, {
+        whenChanged: [intentBackwashStartTopicName],
+        then: function () {
+            var mode = dev[modeTopicName];
+            if (mode === 2) {
+                applyMode(4);
+            }
+        }
+    });
+
+    defineRule("intent-rinse-start-" + name, {
+        whenChanged: [intentRinseStartTopicName],
+        then: function () {
+            var mode = dev[modeTopicName];
+            if (mode === 2) {
+                applyMode(5);
+            }
+        }
+    });
+
+    defineRule("intent-emergency-stop-" + name, {
+        whenChanged: [intentEmergencyStopTopicName],
+        then: function () {
+            applyMode(3);
+        }
+    });
+
+    defineRule("intent-reset-" + name, {
+        whenChanged: [intentResetTopicName],
+        then: function () {
+            var mode = dev[modeTopicName];
+            if (mode === 3) {
+                applyMode(0);
             }
         }
     });
