@@ -79,7 +79,7 @@ function sunriseSunsetSchedule(sunriseStr, sunsetStr, windows) {
     if (windows[WINDOW_MORNING] > 0) {
         var morningStart = sunRise;
         var morningEnd = morningStart + windows[WINDOW_MORNING];
-        result[WINDOW_MORNING] = [toTimeStr(morningStart), toTimeStr(morningEn)];
+        result[WINDOW_MORNING] = [toTimeStr(morningStart), toTimeStr(morningEnd)];
     }
 
     // День: середина между рассветом и закатом
