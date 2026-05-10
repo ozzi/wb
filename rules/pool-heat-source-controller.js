@@ -98,5 +98,5 @@ makePoolHeatSourceController(
         idle:      "asic-cooling-ctrl-outdoor/idle",
         forceStop: "asic-cooling-ctrl-outdoor/force_stop"
     },
-    "wb-mr6cu_XX/K1"  // TODO: заменить на реальный топик реле электрокотла
+    "wb-mio-gpio_17:1/K1"
 );
