@@ -1,4 +1,4 @@
-// Version: 1
+// Version: 2
 // Оркестратор источника тепла для бассейна.
 // Читает статус от pool-heat-controller, выбирает источник тепла (ASIC или электрокотёл)
 // и делегирует управление соответствующему драйверу.
@@ -10,7 +10,7 @@ var POOL_STATUS_WAITING_SETTLE = 6;
 function makePoolHeatSourceController(
     name,
     poolHeatRequestTopicName,
-    asicIntentTopicName,
+    asicCmdTopics,
     boilerRelayTopicName
 ) {
     var deviceName = "pool-heat-source-ctrl-" + name;
@@ -54,7 +54,7 @@ function makePoolHeatSourceController(
 
         if (heatSource === 1) {
             // Режим электрокотла: асики останавливаем принудительно
-            dev[asicIntentTopicName] = "force_stop";
+            dev[asicCmdTopics.forceStop] = true;
             if (heatRequest === POOL_STATUS_HEATING) {
                 startBoiler();
             } else {
@@ -68,14 +68,14 @@ function makePoolHeatSourceController(
         stopBoiler();
 
         if (heatRequest === POOL_STATUS_HEATING) {
-            dev[asicIntentTopicName] = "heat";
+            dev[asicCmdTopics.heat] = true;
         } else if (heatRequest === POOL_STATUS_WAITING_SETTLE) {
             log("[pool-heat-source-{}] ASIC mode: waiting for temperature settle, doing nothing", name);
         } else if (heatRequest === POOL_STATUS_IDLE) {
-            dev[asicIntentTopicName] = "idle";
+            dev[asicCmdTopics.idle] = true;
         } else {
             // STATUS_OFF, STATUS_STANDBY, STATUS_ERROR_* — немедленная остановка
-            dev[asicIntentTopicName] = "force_stop";
+            dev[asicCmdTopics.forceStop] = true;
         }
     }
 
@@ -93,6 +93,10 @@ function makePoolHeatSourceController(
 makePoolHeatSourceController(
     "outdoor",
     "pool-heat-ctrl-outdoor/status",
-    "asic-cooling-ctrl-outdoor/intent",
+    {
+        heat:      "asic-cooling-ctrl-outdoor/heat",
+        idle:      "asic-cooling-ctrl-outdoor/idle",
+        forceStop: "asic-cooling-ctrl-outdoor/force_stop"
+    },
     "wb-mr6cu_XX/K1"  // TODO: заменить на реальный топик реле электрокотла
 );

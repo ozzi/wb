@@ -1,12 +1,12 @@
-// Version: 1
+// Version: 2
 // Контроллер охлаждения ASIC майнеров.
 // Управляет запуском и остановкой майнеров с учётом минимального времени работы.
 // Используется как драйвер исполнительного устройства — не содержит логики выбора источника тепла.
 //
-// Intent-модель: оркестратор пишет в топик intent одно из значений:
-//   "heat"       — запустить майнеры
-//   "idle"       — остановить с учётом минимального времени работы
-//   "force_stop" — немедленная остановка
+// Управление через flash-кнопки:
+//   heat       — запустить майнеры
+//   idle       — остановить с учётом минимального времени работы
+//   force_stop — немедленная остановка
 
 function makeASICCoolingController(name, asicDeviceNames) {
     var deviceName = "asic-cooling-ctrl-" + name;
@@ -14,11 +14,17 @@ function makeASICCoolingController(name, asicDeviceNames) {
     defineVirtualDevice(deviceName, {
         title: "ASIC Cooling Controller - " + name,
         cells: {
-            intent: {
-                title: "intent",
-                type: "text",
-                value: "",
-                readonly: false
+            heat: {
+                title: "heat",
+                type: "pushbutton"
+            },
+            idle: {
+                title: "idle",
+                type: "pushbutton"
+            },
+            force_stop: {
+                title: "force stop",
+                type: "pushbutton"
             },
             min_run_minutes: {
                 title: "min run minutes",
@@ -35,8 +41,10 @@ function makeASICCoolingController(name, asicDeviceNames) {
         }
     });
 
-    var intentTopicName = deviceName + "/intent";
-    var minRunMinutesTopicName = deviceName + "/min_run_minutes";
+    var heatTopicName       = deviceName + "/heat";
+    var idleTopicName       = deviceName + "/idle";
+    var forceStopTopicName  = deviceName + "/force_stop";
+    var minRunMinutesTopicName  = deviceName + "/min_run_minutes";
     var miningStartedAtTopicName = deviceName + "/mining_started_at";
 
     var stopTimer = null;
@@ -69,53 +77,57 @@ function makeASICCoolingController(name, asicDeviceNames) {
         }
     }
 
-    function applyIntent() {
-        var intent = dev[intentTopicName];
-        log("[asic-cooling-{}] intent = {}", name, intent);
+    function onHeat() {
+        log("[asic-cooling-{}] cmd: heat", name);
+        cancelStopTimer();
+        if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
+            dev[miningStartedAtTopicName] = Date.now();
+        }
+        startAllASICs();
+    }
 
-        if (intent === "") {
-            // Пустое значение при старте — ничего не делаем
-            return;
-        } else if (intent === "heat") {
-            cancelStopTimer();
-            if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
-                dev[miningStartedAtTopicName] = Date.now();
-            }
-            startAllASICs();
-        } else if (intent === "idle") {
-            var miningStartedAt = dev[miningStartedAtTopicName];
-            if (!miningStartedAt || miningStartedAt === 0) {
-                stopAllASICs();
-                return;
-            }
-            var minRunMinutes = dev[minRunMinutesTopicName];
-            var elapsed = (Date.now() - miningStartedAt) / 60000;
-            var remaining = minRunMinutes - elapsed;
-            if (remaining <= 0) {
-                stopAllASICs();
-            } else {
-                log("[asic-cooling-{}] waiting {} min before stop", name, Math.ceil(remaining));
-                cancelStopTimer();
-                stopTimer = setTimeout(function () {
-                    stopTimer = null;
-                    stopAllASICs();
-                }, remaining * 60 * 1000);
-            }
-        } else {
-            // "force_stop" или любое неизвестное значение
-            cancelStopTimer();
+    function onIdle() {
+        log("[asic-cooling-{}] cmd: idle", name);
+        var miningStartedAt = dev[miningStartedAtTopicName];
+        if (!miningStartedAt || miningStartedAt === 0) {
             stopAllASICs();
+            return;
+        }
+        var minRunMinutes = dev[minRunMinutesTopicName];
+        var elapsed = (Date.now() - miningStartedAt) / 60000;
+        var remaining = minRunMinutes - elapsed;
+        if (remaining <= 0) {
+            stopAllASICs();
+        } else {
+            log("[asic-cooling-{}] waiting {} min before stop", name, Math.ceil(remaining));
+            cancelStopTimer();
+            stopTimer = setTimeout(function () {
+                stopTimer = null;
+                stopAllASICs();
+            }, remaining * 60 * 1000);
         }
     }
 
-    defineRule("asic-cooling-intent-" + name, {
-        whenChanged: [intentTopicName],
-        then: function () {
-            applyIntent();
-        }
+    function onForceStop() {
+        log("[asic-cooling-{}] cmd: force_stop", name);
+        cancelStopTimer();
+        stopAllASICs();
+    }
+
+    defineRule("asic-cooling-heat-" + name, {
+        whenChanged: [heatTopicName],
+        then: function () { onHeat(); }
     });
 
-    // Не вызываем applyIntent() при старте — intent="" означает "ничего не делать"
+    defineRule("asic-cooling-idle-" + name, {
+        whenChanged: [idleTopicName],
+        then: function () { onIdle(); }
+    });
+
+    defineRule("asic-cooling-force-stop-" + name, {
+        whenChanged: [forceStopTopicName],
+        then: function () { onForceStop(); }
+    });
 }
 
 makeASICCoolingController(
