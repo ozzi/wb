@@ -1,3 +1,5 @@
+// Version: 1
+
 function updateSetpoint(
   enabledName,
   upperOutdoorName,

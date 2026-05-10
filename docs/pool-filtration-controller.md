@@ -1,3 +1,5 @@
+<!-- Version: 1 -->
+
 # pool-filtration-controller.js
 
 Контроллер управления насосом фильтрации бассейна.

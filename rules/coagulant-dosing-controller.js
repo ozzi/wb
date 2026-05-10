@@ -1,3 +1,4 @@
+// Version: 1
 // Интервал дозирования — раз в час (захардкожено)
 var COAGULANT_DOSE_INTERVAL_MS = 60 * 60 * 1000;
 

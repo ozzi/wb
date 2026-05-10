@@ -1,3 +1,4 @@
+// Version: 1
 // Индексы временных окон
 var WINDOW_MORNING = 0;
 var WINDOW_DAY     = 1;

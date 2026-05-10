@@ -1,3 +1,5 @@
+// Version: 1
+
 function updateLampState(state, lampVD, filterTopic) {
     var mode = dev[lampVD]["mode"];
     var filterOn = dev[filterTopic] == 1; // Проверяем, что фильтр включен (значение "1")

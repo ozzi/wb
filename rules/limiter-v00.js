@@ -1,3 +1,5 @@
+// Version: 1
+
 var currentsSnapshotMap = {};
 var totalCurrentsMap = {};
 var limiterTopicName = "wb-mio-gpio_44:1/K7";
