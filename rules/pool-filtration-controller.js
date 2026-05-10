@@ -196,12 +196,12 @@ function makePoolFiltrationController(
         }
     });
 
-    // intent_stop: run → idle
+    // intent_stop: run/backwash/rinse → idle
     defineRule("intent-stop-" + name, {
         whenChanged: [intentStopTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 1) {
+            if (mode === 1 || mode === 4 || mode === 5) {
                 applyMode(0);
             }
         }
