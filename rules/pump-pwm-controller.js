@@ -1,4 +1,4 @@
-// Version: 1
+// Version: 2
 
 function makePumpPWMController(
   name,
@@ -44,7 +44,7 @@ function makePumpPWMController(
     then: function (newValue, devName, cellName) {
       var stateValue = dev[stateTopicName];
       if (stateValue == 1) {
-        var power = (maxSpeedValue - minSpeedValue) / 1000 * dev[powerTopicName] + minSpeedValue;
+        var power = minSpeedValue + (maxSpeedValue - minSpeedValue) / 1000 * dev[powerTopicName];
         dev[outputPWMValue] = power * 10;
       } else if (stateValue == 2) {
         dev[outputPWMValue] = stopValue * 10;
@@ -56,6 +56,4 @@ function makePumpPWMController(
 }
 
 
-makePumpPWMController("pool-heat-exchanger", 840, 100, 960, 1000, "wb-mao4_16/Channel 1");
 makePumpPWMController("asic", 840, 100, 960, 1000, "wb-mao4_16/Channel 2");
-makePumpPWMController("dry-cooling-tower", 840, 100, 960, 1000, "wb-mao4_16/Channel 3");
