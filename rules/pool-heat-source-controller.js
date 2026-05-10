@@ -1,4 +1,4 @@
-// Version: 3
+// Version: 4
 // Оркестратор источника тепла для бассейна.
 // Читает статус от pool-heat-controller, выбирает источник тепла (ASIC или электрокотёл)
 // и делегирует управление соответствующему драйверу.
@@ -12,7 +12,8 @@ function makePoolHeatSourceController(
     poolHeatRequestTopicName,
     asicCmdTopics,
     boilerRelayTopicName,
-    heatExchangerPumpPowerTopicName
+    heatExchangerPumpPowerTopicName,
+    asicStateTopicName
 ) {
     var deviceName = "pool-heat-source-ctrl-" + name;
 
@@ -26,7 +27,8 @@ function makePoolHeatSourceController(
                 readonly: false,
                 enum: {
                     0: {en: "ASIC",   ru: "ASIC"},
-                    1: {en: "Boiler", ru: "Электрокотёл"}
+                    1: {en: "Boiler", ru: "Электрокотёл"},
+                    2: {en: "Auto",   ru: "Авто"}
                 }
             },
             coast_down_minutes: {
@@ -34,20 +36,47 @@ function makePoolHeatSourceController(
                 type: "value",
                 value: 3,
                 readonly: false
+            },
+            asic_fallback_minutes: {
+                title: "asic fallback minutes",
+                type: "value",
+                value: 10,
+                readonly: false
+            },
+            asic_state: {
+                title: "asic state (auto mode)",
+                type: "text",
+                value: "",
+                readonly: true
             }
         }
     });
 
-    var heatSourceTopicName      = deviceName + "/heat_source";
+    var heatSourceTopicName       = deviceName + "/heat_source";
     var coastDownMinutesTopicName = deviceName + "/coast_down_minutes";
+    var asicFallbackMinutesTopicName = deviceName + "/asic_fallback_minutes";
+    var asicStateTopicNameLocal   = deviceName + "/asic_state";
 
     var coastDownTimer = null;
+    var asicFallbackTimer = null;
+    var asicFallbackActive = false;
 
     function cancelCoastDownTimer() {
         if (coastDownTimer !== null) {
             clearTimeout(coastDownTimer);
             coastDownTimer = null;
         }
+    }
+
+    function cancelAsicFallbackTimer() {
+        if (asicFallbackTimer !== null) {
+            clearTimeout(asicFallbackTimer);
+            asicFallbackTimer = null;
+        }
+    }
+
+    function isAsicBad(asicState) {
+        return asicState === "failure" || asicState === "unavailable";
     }
 
     function startHeatExchangerPump() {
@@ -93,29 +122,8 @@ function makePoolHeatSourceController(
         }
     }
 
-    function applyHeatRequest() {
-        var heatRequest = dev[poolHeatRequestTopicName];
-        var heatSource  = dev[heatSourceTopicName];
-        log("[pool-heat-source-{}] heat_request = {}, heat_source = {}", name, heatRequest, heatSource);
-
-        if (heatSource === 1) {
-            // Режим электрокотла: асики останавливаем принудительно
-            dev[asicCmdTopics.forceStop] = true;
-            if (heatRequest === POOL_STATUS_HEATING) {
-                cancelCoastDownTimer();
-                startHeatExchangerPump();
-                startBoiler();
-            } else {
-                // WAITING_SETTLE, IDLE, OFF, STANDBY, ERROR — котёл останавливаем
-                stopBoiler();
-                scheduleHeatExchangerPumpStop();
-            }
-            return;
-        }
-
-        // Режим ASIC (heatSource === 0)
+    function applyHeatRequestAsic(heatRequest) {
         stopBoiler();
-
         if (heatRequest === POOL_STATUS_HEATING) {
             cancelCoastDownTimer();
             startHeatExchangerPump();
@@ -126,10 +134,88 @@ function makePoolHeatSourceController(
             scheduleHeatExchangerPumpStop();
             dev[asicCmdTopics.idle] = true;
         } else {
-            // STATUS_OFF, STATUS_STANDBY, STATUS_ERROR_* — немедленная остановка
             scheduleHeatExchangerPumpStop();
             dev[asicCmdTopics.forceStop] = true;
         }
+    }
+
+    function applyHeatRequestBoiler(heatRequest) {
+        dev[asicCmdTopics.forceStop] = true;
+        if (heatRequest === POOL_STATUS_HEATING) {
+            cancelCoastDownTimer();
+            startHeatExchangerPump();
+            startBoiler();
+        } else {
+            stopBoiler();
+            scheduleHeatExchangerPumpStop();
+        }
+    }
+
+    function applyHeatRequest() {
+        var heatRequest = dev[poolHeatRequestTopicName];
+        var heatSource  = dev[heatSourceTopicName];
+        log("[pool-heat-source-{}] heat_request = {}, heat_source = {}", name, heatRequest, heatSource);
+
+        if (heatSource === 1) {
+            // Режим электрокотла
+            cancelAsicFallbackTimer();
+            asicFallbackActive = false;
+            applyHeatRequestBoiler(heatRequest);
+            return;
+        }
+
+        if (heatSource === 0) {
+            // Режим ASIC
+            cancelAsicFallbackTimer();
+            asicFallbackActive = false;
+            applyHeatRequestAsic(heatRequest);
+            return;
+        }
+
+        // Режим Auto (heatSource === 2)
+        if (!asicStateTopicName) {
+            log("[pool-heat-source-{}] auto mode: asicStateTopicName not set, fallback to ASIC", name);
+            applyHeatRequestAsic(heatRequest);
+            return;
+        }
+
+        var asicState = dev[asicStateTopicName];
+        dev[asicStateTopicNameLocal] = asicState || "";
+
+        if (!isAsicBad(asicState)) {
+            // Асик в норме — отменяем таймер фолбэка, работаем на асике
+            if (asicFallbackActive) {
+                log("[pool-heat-source-{}] auto mode: ASIC recovered, switching back to ASIC", name);
+                asicFallbackActive = false;
+                stopBoiler();
+            }
+            cancelAsicFallbackTimer();
+            applyHeatRequestAsic(heatRequest);
+            return;
+        }
+
+        // Асик плохой
+        if (asicFallbackActive) {
+            // Уже переключились на котёл
+            applyHeatRequestBoiler(heatRequest);
+            return;
+        }
+
+        // Запускаем таймер фолбэка если ещё не запущен
+        if (asicFallbackTimer === null) {
+            var minutes = dev[asicFallbackMinutesTopicName];
+            if (!minutes || minutes <= 0) { minutes = 10; }
+            log("[pool-heat-source-{}] auto mode: ASIC is {}, fallback to boiler in {} min", name, asicState, minutes);
+            asicFallbackTimer = setTimeout(function () {
+                asicFallbackTimer = null;
+                asicFallbackActive = true;
+                log("[pool-heat-source-{}] auto mode: fallback timer fired, switching to boiler", name);
+                applyHeatRequest();
+            }, minutes * 60 * 1000);
+        }
+
+        // Пока таймер не истёк — продолжаем на асике (он может восстановиться)
+        applyHeatRequestAsic(heatRequest);
     }
 
     defineRule("pool-heat-source-" + name, {
@@ -138,6 +224,17 @@ function makePoolHeatSourceController(
             applyHeatRequest();
         }
     });
+
+    if (asicStateTopicName) {
+        defineRule("pool-heat-source-asic-state-" + name, {
+            whenChanged: [asicStateTopicName],
+            then: function () {
+                var heatSource = dev[heatSourceTopicName];
+                if (heatSource !== 2) { return; }
+                applyHeatRequest();
+            }
+        });
+    }
 
     // Не вызываем applyHeatRequest() при старте — состояние восстановится
     // через defineRule когда придут retained-значения из MQTT
@@ -152,5 +249,6 @@ makePoolHeatSourceController(
         forceStop: "asic-cooling-ctrl-outdoor/force_stop"
     },
     "wb-mio-gpio_17:1/K1",
-    "pump-pwm-controller-pool-heat-exchanger/power"
+    "pump-pwm-controller-pool-heat-exchanger/power",
+    "ANTMINER S21e/state"
 );
