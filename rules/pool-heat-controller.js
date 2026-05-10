@@ -286,7 +286,7 @@ function makePoolHeatController(
             if (isValidTemperature(inletTemperature)) {
                 var delta = (outletTemperature + outletOffset) - inletTemperature;
                 dev[deltaTopicName] = delta;
-                applyFlowRate();
+                applyDeltaValid();
             }
         }
     }
