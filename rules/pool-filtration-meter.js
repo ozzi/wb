@@ -95,7 +95,7 @@ function makePoolFiltrationMeter(name, modeTopicName, timeframe) {
     setInterval(dailyCyclesCalc, timeframe);
 
     defineRule("reset-daily-stats-" + name, {
-        when: cron("0 0 * * *"),
+        when: cron("0 0 0 * * *"),
         then: function () {
             dev[totalVolumeTopicName] = 0;
             dev[dailyCyclesTopicName] = 0;
