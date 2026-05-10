@@ -1,4 +1,4 @@
-// Version: 2
+// Version: 3
 // Контроллер охлаждения ASIC майнеров.
 // Управляет запуском и остановкой майнеров с учётом минимального времени работы.
 // Используется как драйвер исполнительного устройства — не содержит логики выбора источника тепла.
@@ -8,7 +8,7 @@
 //   idle       — остановить с учётом минимального времени работы
 //   force_stop — немедленная остановка
 
-function makeASICCoolingController(name, asicDeviceNames) {
+function makeASICCoolingController(name, asicDeviceNames, pumpPowerTopicName) {
     var deviceName = "asic-cooling-ctrl-" + name;
 
     defineVirtualDevice(deviceName, {
@@ -32,6 +32,12 @@ function makeASICCoolingController(name, asicDeviceNames) {
                 value: 30,
                 readonly: false
             },
+            coast_down_seconds: {
+                title: "coast down seconds",
+                type: "value",
+                value: 30,
+                readonly: false
+            },
             mining_started_at: {
                 title: "mining started at (ms)",
                 type: "value",
@@ -44,16 +50,54 @@ function makeASICCoolingController(name, asicDeviceNames) {
     var heatTopicName       = deviceName + "/heat";
     var idleTopicName       = deviceName + "/idle";
     var forceStopTopicName  = deviceName + "/force_stop";
-    var minRunMinutesTopicName  = deviceName + "/min_run_minutes";
+    var minRunMinutesTopicName   = deviceName + "/min_run_minutes";
+    var coastDownSecondsTopicName = deviceName + "/coast_down_seconds";
     var miningStartedAtTopicName = deviceName + "/mining_started_at";
 
     var stopTimer = null;
+    var pumpCoastDownTimer = null;
 
     function cancelStopTimer() {
         if (stopTimer !== null) {
             clearTimeout(stopTimer);
             stopTimer = null;
         }
+    }
+
+    function cancelPumpCoastDownTimer() {
+        if (pumpCoastDownTimer !== null) {
+            clearTimeout(pumpCoastDownTimer);
+            pumpCoastDownTimer = null;
+        }
+    }
+
+    function startPump() {
+        if (pumpPowerTopicName) {
+            log("[asic-cooling-{}] starting pump", name);
+            dev[pumpPowerTopicName] = 1000;
+        }
+    }
+
+    function stopPump() {
+        if (pumpPowerTopicName) {
+            log("[asic-cooling-{}] stopping pump", name);
+            dev[pumpPowerTopicName] = 0;
+        }
+    }
+
+    function schedulePumpStop() {
+        if (!pumpPowerTopicName) { return; }
+        cancelPumpCoastDownTimer();
+        var seconds = dev[coastDownSecondsTopicName];
+        if (!seconds || seconds <= 0) {
+            stopPump();
+            return;
+        }
+        log("[asic-cooling-{}] pump coast down: stopping in {} sec", name, seconds);
+        pumpCoastDownTimer = setTimeout(function () {
+            pumpCoastDownTimer = null;
+            stopPump();
+        }, seconds * 1000);
     }
 
     function stopAllASICs() {
@@ -80,6 +124,8 @@ function makeASICCoolingController(name, asicDeviceNames) {
     function onHeat() {
         log("[asic-cooling-{}] cmd: heat", name);
         cancelStopTimer();
+        cancelPumpCoastDownTimer();
+        startPump();
         if (!dev[miningStartedAtTopicName] || dev[miningStartedAtTopicName] === 0) {
             dev[miningStartedAtTopicName] = Date.now();
         }
@@ -98,12 +144,14 @@ function makeASICCoolingController(name, asicDeviceNames) {
         var remaining = minRunMinutes - elapsed;
         if (remaining <= 0) {
             stopAllASICs();
+            schedulePumpStop();
         } else {
             log("[asic-cooling-{}] waiting {} min before stop", name, Math.ceil(remaining));
             cancelStopTimer();
             stopTimer = setTimeout(function () {
                 stopTimer = null;
                 stopAllASICs();
+                schedulePumpStop();
             }, remaining * 60 * 1000);
         }
     }
@@ -112,6 +160,7 @@ function makeASICCoolingController(name, asicDeviceNames) {
         log("[asic-cooling-{}] cmd: force_stop", name);
         cancelStopTimer();
         stopAllASICs();
+        schedulePumpStop();
     }
 
     defineRule("asic-cooling-heat-" + name, {
@@ -132,5 +181,6 @@ function makeASICCoolingController(name, asicDeviceNames) {
 
 makeASICCoolingController(
     "outdoor",
-    ["ANTMINER S21e"]
+    ["ANTMINER S21e"],
+    "pump-pwm-controller-asic/power"
 );
