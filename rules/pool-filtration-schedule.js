@@ -150,6 +150,60 @@ function optimizedSchedule(windows) {
     return result;
 }
 
+// Сливает пересекающиеся или смежные окна.
+// Вход: массив [null | [startStr, endStr], ...]
+// Выход: массив [startStr, endStr] (только непустые, слитые)
+function mergeOverlappingWindows(times) {
+    // Собираем непустые окна в минутах
+    var intervals = [];
+    for (var i = 0; i < times.length; i++) {
+        if (!times[i]) { continue; }
+        var s = toMinutes(times[i][0]);
+        var e = toMinutes(times[i][1]);
+        // Нормализуем: если конец <= начала — окно переходит через полночь
+        if (e <= s) { e += 1440; }
+        intervals.push([s, e]);
+    }
+
+    if (intervals.length === 0) { return []; }
+
+    // Сортируем по началу
+    intervals.sort(function (a, b) { return a[0] - b[0]; });
+
+    // Сливаем пересекающиеся/смежные
+    var merged = [intervals[0]];
+    for (var j = 1; j < intervals.length; j++) {
+        var last = merged[merged.length - 1];
+        if (intervals[j][0] <= last[1]) {
+            // Пересечение — расширяем конец
+            if (intervals[j][1] > last[1]) {
+                last[1] = intervals[j][1];
+            }
+        } else {
+            merged.push(intervals[j]);
+        }
+    }
+
+    // Переводим обратно в строки, нормализуем минуты через 1440
+    var result = [];
+    for (var k = 0; k < merged.length; k++) {
+        result.push([toTimeStr(merged[k][0]), toTimeStr(merged[k][1])]);
+    }
+    return result;
+}
+
+// Считает суммарное время работы в часах по массиву слитых окон [[startStr, endStr], ...]
+function calcActualWorkHours(mergedTimes) {
+    var total = 0;
+    for (var i = 0; i < mergedTimes.length; i++) {
+        var s = toMinutes(mergedTimes[i][0]);
+        var e = toMinutes(mergedTimes[i][1]);
+        if (e <= s) { e += 1440; }
+        total += e - s;
+    }
+    return total / 60;
+}
+
 function makePoolFiltrationSchedule(
     name,
     poolVolumeTopicName,
@@ -323,8 +377,11 @@ function makePoolFiltrationSchedule(
                 times = optimizedSchedule(windows);
             }
 
-            dev[workHoursPerDayTopicName]  = workHoursPerDay;
-            dev[scheduleTopicName]         = arrayToString(times);
+            var mergedTimes = mergeOverlappingWindows(times);
+            var actualWorkHours = calcActualWorkHours(mergedTimes);
+
+            dev[workHoursPerDayTopicName]  = actualWorkHours;
+            dev[scheduleTopicName]         = arrayToString(mergedTimes);
             dev[calcTurnoverTimeTopicName] = poolVolume / 1000 / pumpFlow;
         }
     });
