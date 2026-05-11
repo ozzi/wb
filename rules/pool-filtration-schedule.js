@@ -399,7 +399,7 @@ function makePoolFiltrationSchedule(
             var timeWindowsStr = dev[scheduleTopicName];
 
             if (!timeWindowsStr || timeWindowsStr === "") {
-                if (mode == 1) { dev[intentStopTopicName] = 1; }
+                if (mode == 1) { dev[intentStopTopicName] = true; }
                 return;
             }
 
@@ -414,9 +414,9 @@ function makePoolFiltrationSchedule(
             }
 
             if (isInWindow) {
-                if (mode == 0) { dev[intentStartTopicName] = 1; }
+                if (mode == 0) { dev[intentStartTopicName] = true; }
             } else {
-                if (mode == 1) { dev[intentStopTopicName] = 1; }
+                if (mode == 1) { dev[intentStopTopicName] = true; }
             }
         }
     });
