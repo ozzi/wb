@@ -120,6 +120,7 @@ function makePoolFiltrationController(
         cancelFlowCheckTimer();
         var delay = dev[flowCheckDelayTopicName];
         if (!delay || delay <= 0) { delay = 30; }
+        if (delay > 300) { delay = 300; }
         flowCheckTimer = setTimeout(function () {
             flowCheckTimer = null;
             var mode = dev[modeTopicName];
@@ -133,6 +134,13 @@ function makePoolFiltrationController(
     }
 
     function applyMode(newMode) {
+        var prevMode = dev[modeTopicName];
+        if (newMode === prevMode) {
+            return;
+        }
+
+        log("[pool-filtration-ctrl-{}] mode: {} → {}", name, prevMode, newMode);
+
         cancelFlowCheckTimer();
         cancelBackwashTimer();
         cancelRinseTimer();
@@ -163,23 +171,27 @@ function makePoolFiltrationController(
                 dev[pumpSwitchTopicName] = false;
             }
         } else if (newMode === 4) {
-            // backwash — насос выключен в service_wait, переключаем краны, включаем насос
+            // backwash — переключаем краны в положение промывки, включаем насос
+            // TODO: добавить управление кранами (valveTopicNames) для переключения в режим промывки
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
             var bDuration = dev[backwashDurationTopicName];
             if (!bDuration || bDuration <= 0) { bDuration = 180; }
+            if (bDuration > 3600) { bDuration = 3600; }
             backwashTimer = setTimeout(function () {
                 backwashTimer = null;
                 applyMode(2);
             }, bDuration * 1000);
         } else if (newMode === 5) {
-            // rinse — насос выключен в service_wait, переключаем краны, включаем насос
+            // rinse — переключаем краны в положение уплотнения, включаем насос
+            // TODO: добавить управление кранами (valveTopicNames) для переключения в режим уплотнения
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
             var rDuration = dev[rinseDurationTopicName];
             if (!rDuration || rDuration <= 0) { rDuration = 45; }
+            if (rDuration > 3600) { rDuration = 3600; }
             rinseTimer = setTimeout(function () {
                 rinseTimer = null;
                 applyMode(2);
