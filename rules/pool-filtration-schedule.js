@@ -326,13 +326,13 @@ function makePoolFiltrationSchedule(
             var poolVolume = dev[poolVolumeTopicName];
             var pumpFlow = dev[pumpFlowRateTopicName];
             if (!pumpFlow || pumpFlow <= 0) {
-                log.warning("[pool-filtration-schedule-{}] pumpFlow is zero", name);
+                log.warn("[pool-filtration-schedule-{}] pumpFlow is zero", name);
                 return;
             }
 
             var filterDiameter = dev[filterDiameterTopicName];
             if (filterDiameter <= 0) {
-                log.warning("[pool-filtration-schedule-{}] filter_diameter is zero or negative", name);
+                log.warn("[pool-filtration-schedule-{}] filter_diameter is zero or negative", name);
                 return;
             }
 
@@ -366,11 +366,11 @@ function makePoolFiltrationSchedule(
                 var sunriseTime = dev[sunriseTimeTopicName];
                 var sunsetTime  = dev[sunsetTimeTopicName];
                 if (!isValidTimeStr(sunriseTime)) {
-                    log.warning("[pool-filtration-schedule-{}] invalid sunrise_time: '{}'", name, sunriseTime);
+                    log.warn("[pool-filtration-schedule-{}] invalid sunrise_time: '{}'", name, sunriseTime);
                     return;
                 }
                 if (!isValidTimeStr(sunsetTime)) {
-                    log.warning("[pool-filtration-schedule-{}] invalid sunset_time: '{}'", name, sunsetTime);
+                    log.warn("[pool-filtration-schedule-{}] invalid sunset_time: '{}'", name, sunsetTime);
                     return;
                 }
                 times = sunriseSunsetSchedule(sunriseTime, sunsetTime, windows);
