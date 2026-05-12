@@ -356,21 +356,19 @@ function makePoolFiltrationController(
 
     // Восстановление состояния после перезагрузки правила
     // Таймеры теряются, поэтому небезопасные режимы сбрасываем
-    setTimeout(function () {
-        var mode = dev[modeTopicName];
-        if (mode === 4 || mode === 5) {
-            log.warning("[pool-filtration-ctrl-{}] recovered after restart: mode {} → service_wait (timers lost)", name, mode);
-            applyMode(2);
-        } else if (mode === 1) {
-            log("[pool-filtration-ctrl-{}] recovered after restart: mode 1, restarting flow check", name);
-            if (dev[pumpSwitchTopicName] !== true) {
-                dev[pumpSwitchTopicName] = true;
-            }
-            if (flowSensorTopicName) {
-                startFlowCheckTimer();
-            }
+    var mode = dev[modeTopicName];
+    if (mode === 4 || mode === 5) {
+        log.warning("[pool-filtration-ctrl-{}] recovered after restart: mode {} → service_wait (timers lost)", name, mode);
+        applyMode(2);
+    } else if (mode === 1) {
+        log("[pool-filtration-ctrl-{}] recovered after restart: mode 1, restarting flow check", name);
+        if (dev[pumpSwitchTopicName] !== true) {
+            dev[pumpSwitchTopicName] = true;
         }
-    }, 1000);
+        if (flowSensorTopicName) {
+            startFlowCheckTimer();
+        }
+    }
 
     if (buttonDoublePressTopicName) {
         defineRule("double-press-" + name, {
