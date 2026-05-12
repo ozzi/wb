@@ -171,8 +171,7 @@ function makePoolFiltrationController(
                 dev[pumpSwitchTopicName] = false;
             }
         } else if (newMode === 4) {
-            // backwash — переключаем краны в положение промывки, включаем насос
-            // TODO: добавить управление кранами (valveTopicNames) для переключения в режим промывки
+            // backwash — краны переключаются вручную, включаем насос
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
@@ -184,8 +183,7 @@ function makePoolFiltrationController(
                 applyMode(2);
             }, bDuration * 1000);
         } else if (newMode === 5) {
-            // rinse — переключаем краны в положение уплотнения, включаем насос
-            // TODO: добавить управление кранами (valveTopicNames) для переключения в режим уплотнения
+            // rinse — краны переключаются вручную, включаем насос
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
@@ -355,6 +353,24 @@ function makePoolFiltrationController(
             }
         });
     }
+
+    // Восстановление состояния после перезагрузки правила
+    // Таймеры теряются, поэтому небезопасные режимы сбрасываем
+    setTimeout(function () {
+        var mode = dev[modeTopicName];
+        if (mode === 4 || mode === 5) {
+            log.warning("[pool-filtration-ctrl-{}] recovered after restart: mode {} → service_wait (timers lost)", name, mode);
+            applyMode(2);
+        } else if (mode === 1) {
+            log("[pool-filtration-ctrl-{}] recovered after restart: mode 1, restarting flow check", name);
+            if (dev[pumpSwitchTopicName] !== true) {
+                dev[pumpSwitchTopicName] = true;
+            }
+            if (flowSensorTopicName) {
+                startFlowCheckTimer();
+            }
+        }
+    }, 1000);
 
     if (buttonDoublePressTopicName) {
         defineRule("double-press-" + name, {
