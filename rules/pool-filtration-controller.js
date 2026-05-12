@@ -136,6 +136,10 @@ function makePoolFiltrationController(
     function applyMode(newMode) {
         var prevMode = dev[modeTopicName];
         if (newMode === prevMode) {
+            // For fault mode, ensure pump is off even if mode hasn't changed
+            if (newMode === 3 && dev[pumpSwitchTopicName] !== false) {
+                dev[pumpSwitchTopicName] = false;
+            }
             return;
         }
 

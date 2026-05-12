@@ -89,7 +89,12 @@ function makePoolFiltrationMeter(name, modeTopicName, timeframe) {
         last_update = now;
         dev[totalVolumeTopicName] = totalVolume;
         var poolVolume = dev[poolVolumeTopicName];
-        dev[dailyCyclesTopicName] = totalVolume / poolVolume;
+        if (poolVolume > 0) {
+            dev[dailyCyclesTopicName] = totalVolume / poolVolume;
+        } else {
+            log.warning("[pool-filtration-meter-{}] poolVolume is zero or invalid, setting daily cycles to 0", name);
+            dev[dailyCyclesTopicName] = 0;
+        }
     };
 
     setInterval(dailyCyclesCalc, timeframe);
