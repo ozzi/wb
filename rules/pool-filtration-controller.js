@@ -223,12 +223,12 @@ function makePoolFiltrationController(
         }
     });
 
-    // intent_service: run/backwash/rinse → service_wait
+    // intent_service: idle/run/backwash/rinse → service_wait
     defineRule("intent-service-" + name, {
         whenChanged: [intentServiceTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 1 || mode === 4 || mode === 5) {
+            if (mode === 0 || mode === 1 || mode === 4 || mode === 5) {
                 applyMode(2);
             }
         }
