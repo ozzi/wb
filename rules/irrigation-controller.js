@@ -21,7 +21,7 @@ function makeIrrigationController(
             },
             pulses_per_liter: {
                 type: "value",
-                value: 10
+                value: 225
             },
             total_liters: {
                 type: "value",
@@ -101,6 +101,6 @@ function makeIrrigationController(
 makeIrrigationController(
     "main",
     "tank-level-main/status",
-    "wb-mr6cv3_52/Counter 1",
-    "wb-mr6cv3_52/K3"
+    "wb-mr6cv3_52/Input 4 counter",
+    "wb-mr6cv3_52/K1"
 );
