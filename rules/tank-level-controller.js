@@ -33,8 +33,12 @@ function makeTankLevelController(
                 type: "switch",
                 value: true
             },
-            manual_fill: {
+            fill_now: {
+                type: "pushbutton"
+            },
+            force_fill: {
                 type: "switch",
+                readonly: true,
                 value: false
             }
         }
@@ -52,7 +56,7 @@ function makeTankLevelController(
         var top = getSensorState(topSensorTopic);
 
         var autoMode = !!dev[deviceName]["auto_mode"];
-        var manualFill = !!dev[deviceName]["manual_fill"];
+        var forceFill = !!dev[deviceName]["force_fill"];
 
         var newStatus = "empty";
         var isError = false;
@@ -79,28 +83,24 @@ function makeTankLevelController(
         dev[deviceName]["status"] = newStatus;
 
         // Логика управления клапаном
-        var currentFilling = !!dev[deviceName]["filling"];
-        var shouldFill = currentFilling;
+        var shouldFill = false;
 
         if (isError) {
             shouldFill = false;
-        } else if (autoMode) {
-            if (currentFilling) {
-                // Если уже наполняем, то выключаем только когда бак полностью заполнен
-                if (newStatus === "full") {
-                    shouldFill = false;
-                }
-            } else {
-                // Если не наполняем, то включаем, когда средний и верхний датчики сухие
-                if (!middle && !top) {
-                    shouldFill = true;
-                }
-            }
+            forceFill = false;
+        } else if (newStatus === "full") {
+            shouldFill = false;
+            forceFill = false;
         } else {
-            // Ручной режим
-            shouldFill = manualFill;
+            var autoFill = autoMode && (!middle && !top);
+            shouldFill = autoFill || forceFill;
         }
 
+        if (dev[deviceName]["force_fill"] !== forceFill) {
+            dev[deviceName]["force_fill"] = forceFill;
+        }
+
+        var currentFilling = !!dev[deviceName]["filling"];
         if (shouldFill !== currentFilling) {
             dev[deviceName]["filling"] = shouldFill;
             dev[valveRelayTopic] = shouldFill;
@@ -134,10 +134,19 @@ function makeTankLevelController(
             topSensorTopic,
             deviceName + "/invert_sensors",
             deviceName + "/debounce_sec",
-            deviceName + "/auto_mode",
-            deviceName + "/manual_fill"
+            deviceName + "/auto_mode"
         ],
         then: function() {
+            scheduleEvaluation();
+        }
+    });
+
+    defineRule({
+        whenChanged: [
+            deviceName + "/fill_now"
+        ],
+        then: function() {
+            dev[deviceName]["force_fill"] = true;
             scheduleEvaluation();
         }
     });
