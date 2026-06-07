@@ -145,3 +145,11 @@ function makeTankLevelController(
     // Первоначальное вычисление состояния при старте правила
     evaluateAndApply();
 }
+
+makeTankLevelController(
+    "main",
+    "wb-mr6cv3_52/Input 1",
+    "wb-mr6cv3_52/Input 2",
+    "wb-mr6cv3_52/Input 3",
+    "wb-mr6cv3_52/K2"
+);
