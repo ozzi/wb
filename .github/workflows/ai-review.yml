@@ -54,6 +54,10 @@ jobs:
             echo 'base_url = "https://llm.outzzz.tech/v1"'
             echo 'env_key = "LITELLM_REVIEWER_KEY"'
             echo 'wire_api = "responses"'
+            echo ''
+            echo '[shell_environment_policy]'
+            echo 'inherit = "none"'
+            echo 'set = { PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME = "/home/runner", USER = "runner" }'
           } > ~/.codex/config.toml
 
       - name: AI Review (headless Codex)
