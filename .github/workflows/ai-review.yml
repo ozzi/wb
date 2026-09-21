@@ -14,7 +14,8 @@ jobs:
     # write-доступ триггера (check-write-access) — двойной фильтр
     if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
-    # Нормальное ревью ~5 мин; 8 — жёсткий потолок против блуждания
+    # Нормальное ревью ~3-5 мин; 8 — жёсткий потолок против блуждания.
+    # От зависаний стрима дополнительно страхует лимит idle в /etc/codex.
     timeout-minutes: 8
     permissions:
       contents: read
@@ -37,8 +38,96 @@ jobs:
           gh api \
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
             --header "Accept: application/vnd.github.diff" > pr.diff
-          # Ограничиваем промпт 60KB: режем по границе строки UTF-8 и помечаем усечение
-          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>60000 else s; open('pr.diff','w').write(s)"
+          # Потолок промпта 60KB. Режем ПО ГРАНИЦАМ ФАЙЛОВ ('diff --git'),
+          # а не посреди hunk'а: ревьюер получает цельные файлы + список
+          # пропущенных; единственный файл больше лимита режется по строкам.
+          python3 - <<'PY'
+          MAX_BYTES = 60000      # потолок итогового файла (байт)
+          NOTE_RESERVE = 5000    # резерв под блок «не вошли файлы» (≤40 имён)
+          BUDGET = MAX_BYTES - NOTE_RESERVE
+          raw = open('pr.diff', 'rb').read().decode('utf-8', 'ignore')
+
+          def bsize(s):
+              return len(s.encode('utf-8', 'ignore'))
+
+          def take_lines(lines, budget):
+              buf, size = [], 0
+              for line in lines:
+                  lb = bsize(line)
+                  if size + lb > budget:
+                      break
+                  buf.append(line)
+                  size += lb
+              return ''.join(buf), size
+
+          def file_name(group):
+              for line in group:
+                  if line.startswith('diff --git '):
+                      fields = line.split()
+                      if len(fields) >= 4:
+                          return fields[3][2:]
+              return '<неопределённый файл>'
+
+          if bsize(raw) <= MAX_BYTES:
+              open('pr.diff', 'w', encoding='utf-8').write(raw)
+              raise SystemExit(0)
+
+          groups, cur = [], []
+          for line in raw.splitlines(keepends=True):
+              # Границей группы служит КАЖДАЯ строка 'diff --git ' — иначе,
+              # когда diff начинается сразу с неё, первый файл уезжает в
+              # «прелюдию» и теряет имя при усечении.
+              if line.startswith('diff --git '):
+                  groups.append(cur)
+                  cur = []
+              cur.append(line)
+          groups.append(cur)
+          # diff, начинающийся с 'diff --git', даёт пустую первую группу
+          if groups and not groups[0]:
+              groups.pop(0)
+          # Первая группа — прелюдия только если она сама не начинается с
+          # 'diff --git' (иначе это первый файл: усечение должно звать его
+          # по имени, а не молча резать как «prelude»).
+          if groups and not groups[0][0].startswith('diff --git '):
+              prelude, files = groups[0], groups[1:]
+          else:
+              prelude, files = [], groups
+
+          head, total = take_lines(prelude, BUDGET)
+          parts, kept, names = [head], 0, []
+          cut_at = None
+          for i, g in enumerate(files):
+              b = sum(bsize(line) for line in g)
+              if total + b <= BUDGET:
+                  parts.append(''.join(g))
+                  total += b
+                  kept += 1
+                  continue
+              # Не влезает: если файлы ещё не начинались — берём первый
+              # усечённым по строкам; остальные файлы перечисляем.
+              if kept == 0:
+                  piece, size = take_lines(g, BUDGET - total)
+                  parts.append(piece)
+                  name = file_name(g)
+                  names.append(name[:100] + (' (усечён)' if size < b else ''))
+              cut_at = i
+              break
+
+          if cut_at is not None:
+              start = cut_at + (1 if kept == 0 else 0)
+              names.extend(file_name(g)[:100] for g in files[start:])
+
+          if names:
+              note = '\n\n[!] diff усечён до 60KB; не вошли файлы:\n'
+              note += '\n'.join('- ' + n for n in names[:40])
+              if len(names) > 40:
+                  note += '\n- … и ещё %d' % (len(names) - 40)
+              note += '\n'
+          else:
+              note = '\n\n[!] diff усечён до 60KB\n'
+
+          open('pr.diff', 'w', encoding='utf-8').write(''.join(parts) + note)
+          PY
           echo "diff size: $(wc -c < pr.diff) bytes"
 
       - name: Pre-configure Codex home
@@ -48,6 +137,23 @@ jobs:
             echo '[tools]'
             echo 'web_search = false'
           } > ~/.codex/config.toml
+          # Лимиты стрима для провайдера, который codex-action заводит локально
+          # (model_provider = codex-action-responses-proxy). В ~/.codex их не
+          # задать: write-proxy-config допишет вторую такую же таблицу (TOML
+          # запрещает дубликаты), а -c model_providers.* экшен запрещает
+          # (RESTRICTED_CONFIG_ROOTS). Поэтому кладём слоем ниже — System
+          # (/etc/codex/config.toml): слои глубоко мёржатся, ключи переживают
+          # запись экшена. Дефолты codex 0.155.1 (idle 300s, до 5 реконнектов,
+          # 4 ретрая) давали застрявшие прогоны до 20 мин; теперь худший stall
+          # ~6 мин — внутри 8-минутного потолка job. Надёжнее вдобавок
+          # поставить request_timeout на ключе/алиасе reviewer в LiteLLM.
+          sudo mkdir -p /etc/codex
+          sudo tee /etc/codex/config.toml > /dev/null <<'EOF'
+          [model_providers.codex-action-responses-proxy]
+          request_max_retries = 2
+          stream_max_retries = 2
+          stream_idle_timeout_ms = 120000
+          EOF
 
       - name: Run Codex
         id: run_codex
@@ -58,11 +164,13 @@ jobs:
           openai-api-key: ${{ secrets.LITELLM_REVIEWER_KEY }}
           model: "agent/reviewer"
           codex-version: "0.155.1"
-          # bwrap-песочница codex сломана на hosted-раннерах (RTM_NEWADDR,
-          # openai/codex#15957); изоляцию обеспечивают drop-sudo (дефолт
-          # safety-strategy), отсутствие ключа в окружении агента и
-          # эфемерность раннера. Вернуть read-only после фикса апстрима.
-          sandbox: "danger-full-access"
+          # bwrap-песочница: актуальный v1-тег экшена сам правит sysctl
+          # unprivileged_userns/apparmor (их issue #75) — та самая ошибка
+          # RTM_NEWADDR, из-за которой стоял danger-full-access. read-only
+          # закрывает ревьюеру запись и сеть (гасит остаточный риск
+          # prompt-injection из diff'а). Если bwrap снова сломается на
+          # раннере — вернуть danger-full-access.
+          sandbox: "read-only"
           prompt: |
             РОЛЬ: ты — code reviewer проекта Wiren Board. Твоя ЕДИНСТВЕННАЯ задача —
             анализ изменений конкретного PR. Это не аудит инфраструктуры.
@@ -92,7 +200,10 @@ jobs:
   post_feedback:
     runs-on: ubuntu-latest
     needs: codex
-    if: needs.codex.outputs.final_message != ''
+    # Отказ ревью (таймаут, 429 бюджет-капа, ошибка LiteLLM/GLM, пустой
+    # ответ) не должен проходить молча — комментируем и его. Fork-прогоны
+    # (result == 'skipped') не комментируем: токен у них read-only.
+    if: ${{ always() && needs.codex.result != 'skipped' }}
     permissions:
       issues: write
       pull-requests: write
@@ -101,12 +212,27 @@ jobs:
         uses: actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
+          CODEX_RESULT: ${{ needs.codex.result }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const { CODEX_FINAL_MESSAGE, CODEX_RESULT } = process.env;
+            let body;
+            if (CODEX_FINAL_MESSAGE) {
+              body = "## 🤖 AI Review — `agent/reviewer` (codex-action)\n\n" + CODEX_FINAL_MESSAGE;
+            } else {
+              const runUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}";
+              body = [
+                "## 🤖 AI Review — ревью не выполнено",
+                "",
+                "Прогон ревьюера завершился со статусом `" + CODEX_RESULT + "` без финального сообщения",
+                "(зависание стрима, ошибка LiteLLM/GLM или исчерпан дневной бюджет ключа).",
+                "Логи: " + runUrl,
+              ].join("\n");
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              body: "## 🤖 AI Review — `agent/reviewer` (codex-action)\n\n" + process.env.CODEX_FINAL_MESSAGE,
+              body,
             });
