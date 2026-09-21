@@ -1,0 +1,76 @@
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Collect PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            --header "Accept: application/vnd.github.diff" > pr.diff
+          # Ограничиваем размер промпта: 60KB diff
+          head -c 60000 pr.diff > pr.diff.tmp && mv pr.diff.tmp pr.diff
+          echo "diff size: $(wc -c < pr.diff) bytes"
+
+      - name: Call AI reviewer
+        env:
+          LITELLM_KEY: ${{ secrets.LITELLM_REVIEWER_KEY }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          jq -n \
+            --rawfile diff pr.diff \
+            --arg title "$PR_TITLE" \
+            --arg body "${PR_BODY:-нет описания}" \
+            --arg num "$PR_NUMBER" \
+            '{
+              model: "agent/reviewer",
+              temperature: 0.2,
+              messages: [
+                {
+                  role: "system",
+                  content: "Ты — строгий, но доброжелательный код-ревьюер проекта Wiren Board (репо с Lua/JS-правилами wb-rules). Ключевые конвенции проекта: код в rules/ выполняется движком wb-rules (НЕ Node.js), стиль ECMAScript 5 — запрещены let/const, arrow functions, classes, async/await, optional chaining, destructuring, import/export. Автоматизация умного дома: важны предсказуемость, отсутствие побочных эффектов, минимальный diff, никакого лишнего рефакторинга. Пиши ревью на русском языке, технические термины — в оригинале. Формат ответа: краткое резюме (1-2 предложения), затем блоки «🔴 Блокер», «🟡 Замечание», «🟢 Хорошо» (если есть). Ссылайся на конкретные строки diff. Если критичных проблем нет — прямо скажи, что PR можно мержить. Не выдумывай проблемы ради объёма."
+                },
+                {
+                  role: "user",
+                  content: ("ПР #\($num): \($title)\n\nОписание: \($body)\n\nDiff для ревью:\n\($diff)")
+                }
+              ]
+            }' > payload.json
+          HTTP=$(curl -sS -w "%{http_code}" -o response.json \
+            https://llm.outzzz.tech/v1/chat/completions \
+            -H "Authorization: Bearer $LITELLM_KEY" \
+            -H "Content-Type: application/json" \
+            --data @payload.json)
+          echo "HTTP $HTTP"
+          jq -r 'if .choices[0].message.content then .choices[0].message.content
+                 else "⚠️ Ревьюер не вернул ответ.\n```json\n" + (.error | tostring // .) + "\n```" end' \
+            response.json > review.md
+
+      - name: Post review comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## 🤖 AI Review — \`agent/reviewer\`"
+            echo
+            cat review.md
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
