@@ -60,13 +60,22 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set +e
+          # danger-full-access: bundled bwrap не работает на hosted-раннерах
+          # (RTM_NEWADDR denied), изоляция обеспечивается эфемерностью раннера
+          # + минимальными permissions. Diff дублируем в промпт — ревью не
+          # зависит от файлового доступа.
           codex exec \
-            --sandbox read-only \
+            --sandbox danger-full-access \
             --output-last-message review.md \
             "$(cat .github/review-prompt.md)
 
             Ревьюируемый PR #${PR_NUMBER}: ${PR_TITLE}
-            Описание: ${PR_BODY:-нет описания}"
+            Описание: ${PR_BODY:-нет описания}
+
+            Diff PR (файл pr.diff, также доступен в корне репо):
+            \`\`\`diff
+            $(cat pr.diff)
+            \`\`\`"
           RC=$?
           set -e
           echo "codex exit code: $RC"
