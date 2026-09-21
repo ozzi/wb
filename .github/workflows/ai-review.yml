@@ -1,7 +1,9 @@
 name: AI Review
 
-# Ревью PR через PR-Agent: детерминированный single-LLM-call на /review,
-# без агентного шелла и песочниц (в отличие от прежнего codex-варианта).
+# Ревью PR через OpenCodeReview (alibaba/open-code-review): гибрид
+# «детерминированные пайплайны + LLM-агент» — селекция/бандлинг файлов,
+# матчинг правил и позиционирование комментариев делаются кодом, агенту
+# остаются только динамические решения и чтение контекста.
 # Модель — LiteLLM-алиас agent/reviewer: алиас, апстрим-модель и дневной
 # бюджет-кап управляются на стороне LiteLLM-прокси.
 on:
@@ -10,58 +12,102 @@ on:
   issue_comment:
     types: [created]
 
+# Конкурентность по PR. Нюанс из их примера: GitHub оценивает concurrency
+# ДО job-level if — плоская группа от любого комментария к PR убивала бы
+# идущее ревью. Совпадающие события (PR-события + команды /open-code-review
+# от членов) делят группу ocr-<pr>, прочие комментарии уходят в noop-группу
+# этого прогона и скипаются мгновенно.
 concurrency:
-  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: >-
+    ${{
+      (
+        github.event_name == 'pull_request'
+        || (
+          github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && github.event.comment.user.type != 'Bot'
+          && (
+            github.event.comment.author_association == 'MEMBER'
+            || github.event.comment.author_association == 'OWNER'
+            || github.event.comment.author_association == 'COLLABORATOR'
+          )
+          && (
+            startsWith(github.event.comment.body, '/open-code-review')
+            || startsWith(github.event.comment.body, '@open-code-review')
+          )
+        )
+      )
+      && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+      || format('noop-{0}', github.run_id)
+    }}
   cancel-in-progress: true
 
 jobs:
-  pr_agent:
-    if: ${{ github.event.sender.type != 'Bot' && (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false || github.event_name == 'issue_comment' && github.event.issue.pull_request != null) }}
+  code-review:
+    # PR-события: только не-форки (секреты на форки не выдаются).
+    # Комментарии: только люди с write-доступом и только команды
+    # /open-code-review или @open-code-review — чужие комментарии
+    # не тратят квоту LLM.
+    if: |-
+      github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+      || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.user.type != 'Bot'
+        && (
+          github.event.comment.author_association == 'MEMBER'
+          || github.event.comment.author_association == 'OWNER'
+          || github.event.comment.author_association == 'COLLABORATOR'
+        )
+        && (
+          startsWith(github.event.comment.body, '/open-code-review')
+          || startsWith(github.event.comment.body, '@open-code-review')
+        )
+      )
     runs-on: ubuntu-latest
-    # Ревью — один LLM-вызов (~1-2 мин); 10 — потолок против зависаний LiteLLM.
-    timeout-minutes: 10
+    # Обычное ревью ~2-5 мин; 25 — потолок против блуждания.
+    timeout-minutes: 25
     permissions:
       contents: read
-      issues: write
       pull-requests: write
     steps:
-      - name: PR Agent review
-        # Пиннуем точный образ вместо композитного экшена: тот тянет плавающий
-        # тег pragent/pr-agent:github_action (FROM без версии в их action.yaml).
-        uses: docker://pragent/pr-agent:0.45.0-github_action
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          # LiteLLM как OpenAI-совместимый endpoint (/v1/chat/completions);
-          # алиас agent/reviewer резолвится на стороне прокси
-          OPENAI_KEY: ${{ secrets.LITELLM_REVIEWER_KEY }}
-          OPENAI.API_BASE: "https://llm.outzzz.tech/v1"
-          config.model: "agent/reviewer"
-          config.fallback_models: '["agent/reviewer"]'
-          # Русский ответ; в комментарии видно модель/токены/время прогона
-          config.response_language: "ru-RU"
-          config.output_run_details: "true"
-          # Автоматически только /review. Describe/improve выключены ЯВНО:
-          # без явных значений раннер запускает все три инструмента.
-          github_action_config.auto_review: "true"
-          github_action_config.auto_describe: "false"
-          github_action_config.auto_improve: "false"
-          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
-          # Ревью на каждый пуш: synchronize идёт мимо pr_actions и требует
-          # handle_push_trigger + push_commands (по умолчанию выключены).
-          github_action_config.handle_push_trigger: "true"
-          github_action_config.push_commands: '["review"]'
-          # Комментарий ревью обновляется (persistent), а не дублируется на пуш
-          pr_reviewer.persistent_comment: "true"
-          # В wb-rules-репо нет тестов и тикет-системы — не просить их ревьюить
-          pr_reviewer.require_tests_review: "false"
-          pr_reviewer.require_ticket_analysis_review: "false"
-          pr_reviewer.extra_instructions: |
-            Проект — автоматизация Wiren Board на wb-rules (ECMAScript 5: без
-            let/const, стрелочных функций, классов, async/await, optional
-            chaining, import/export).
-            Конвенции из AGENTS.md: минимальный diff, без лишнего рефакторинга,
-            предсказуемость и осторожность — код управляет реле и клапанами
-            реальной автоматизации. Сомневаешься в API wb-rules — сверяйся с
-            документацией Wiren Board Wiki.
-            Не ревьюить CI/workflow-инфраструктуру, если она не часть
-            изменённого кода правил. Термины и имена API оставляй в оригинале.
+      - name: Get PR context
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // issue_comment не несёт pull_request-поля верхнего уровня —
+            // резолвим base/head руками, чтобы OCR ревьюил правильный diff.
+            const prNumber = context.issue.number;
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            core.setOutput('base_ref', pullRequest.base.ref);
+            core.setOutput('head_sha', pullRequest.head.sha);
+
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@v1.12.8
+        with:
+          # LiteLLM как OpenAI-совместимый endpoint (алиас резолвится
+          # на стороне прокси); токен — LITELLM_REVIEWER_KEY с бюджет-капом
+          llm_url: "https://llm.outzzz.tech/v1/chat/completions"
+          llm_auth_token: ${{ secrets.LITELLM_REVIEWER_KEY }}
+          llm_model: "agent/reviewer"
+          llm_use_anthropic: "false"
+          # Ответ ревью на русском
+          language: "Russian"
+          # Пин CLI: без него action ставит latest с npm
+          ocr_version: "1.12.8"
+          # Жёсткий токен-кап на прогон (страховка к LiteLLM-бюджету):
+          # перерасход репортится как failed(budget), частичный результат
+          # публикуется, exit 0
+          max_tokens_budget: "200000"
+          # Прогресс прогона в лог workflow — прозрачность при валидации
+          stream_progress: "true"
+          # Один «липкий» summary-комментарий обновляется, а не дублируется
+          sticky_summary: "true"
+          # Инкрементальные inline-комментарии — на следующую итерацию,
+          # после боевой проверки базового потока
+          incremental: "false"
