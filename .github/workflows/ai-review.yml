@@ -66,7 +66,8 @@ jobs:
           echo "HTTP_CODE=$HTTP" >> "$GITHUB_ENV"
           jq -r 'if .choices[0].message.content then .choices[0].message.content
                  else "⚠️ Ревьюер не вернул ответ.\n```json\n" + tostring + "\n```" end' \
-            response.json > review.md
+            response.json > review.md \
+            || echo "⚠️ Ревьюер вернул некорректный ответ (см. логи workflow)" > review.md
 
       - name: Post review comment
         env:
