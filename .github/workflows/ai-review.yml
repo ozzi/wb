@@ -47,11 +47,12 @@ jobs:
     # PR-события: только не-форки (секреты на форки не выдаются).
     # Комментарии: только люди с write-доступом и только команды
     # /open-code-review или @open-code-review — чужие комментарии
-    # не тратят квоту LLM.
-    # Принятый остаточный риск (приватный репо, 2 коллаборатора):
-    # author_association не гарантирует write-права (COLLABORATOR может
-    # быть read-only). Fork head-ветка на issue_comment-пути закрыта
-    # fork-guard'ом в шаге Get PR context.
+    # не тратят квоту LLM. author_association здесь — грубый префильтр
+    # (иначе второй коллаборатор не смог бы запросить ревью);
+    # фактический permission (admin/maintain/write) проверяется в шаге
+    # Get PR context до выдачи секрета (бэкпорт из ozzi/angler-log#34).
+    # Fork head-ветка на issue_comment-пути закрыта fork-guard'ом
+    # в том же шаге Get PR context.
     if: |-
       github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
       || (
@@ -98,18 +99,35 @@ jobs:
             // форком — fail-closed, не fail-open.
             if (!pullRequest.head.repo || pullRequest.head.repo.fork) {
               core.notice('Fork PR: ревью с секретами запрещено — пропускаю.');
-              core.setOutput('fork', 'true');
+              core.setOutput('authorized', 'false');
               return;
             }
-            core.setOutput('fork', 'false');
             core.setOutput('base_ref', pullRequest.base.ref);
             core.setOutput('head_sha', pullRequest.head.sha);
+            // Permission комментатора (бэкпорт из ozzi/angler-log#34,
+            // задача 4): author_association в job-if не гарантирует
+            // write-права (COLLABORATOR может быть read-only) — фактический
+            // уровень проверяем через API. Сбой API — fail-closed без
+            // падения шага: authorized=false, причина в warning.
+            let canReview = false;
+            try {
+              const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.payload.comment.user.login
+              });
+              canReview = ['admin', 'maintain', 'write'].includes(permission.permission);
+            } catch (error) {
+              core.warning(`Permission lookup failed, re-review skipped: ${error.message}`);
+            }
+            core.setOutput('authorized', String(canReview));
 
       - name: Run OpenCodeReview
-        # Пропуск для форк-head PR из issue_comment-пути (fork-guard выше);
-        # для pull_request-событий шаг pr-context не выполнялся и выход
-        # пуст → != 'true' → прогон идёт штатно
-        if: steps.pr-context.outputs.fork != 'true'
+        # Единый гейт authorized из pr-context: форк-head и комментатор
+        # без фактического права write не получают секрет и write-токен.
+        # Для pull_request-событий pr-context не выполнялся → первое
+        # условие истинно, прогон идёт штатно.
+        if: github.event_name != 'issue_comment' || steps.pr-context.outputs.authorized == 'true'
         # Пин по commit SHA тега v1.12.8: action получает llm_auth_token и
         # пишет в PR — mutable-тег апстрима был бы supply-chain риском
         uses: alibaba/open-code-review@5c7b38381d1fdd36de6cf622a2a1f768243c4704 # v1.12.8
