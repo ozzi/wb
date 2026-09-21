@@ -48,10 +48,10 @@ jobs:
     # Комментарии: только люди с write-доступом и только команды
     # /open-code-review или @open-code-review — чужие комментарии
     # не тратят квоту LLM.
-    # Принятые остаточные риски (приватный репо, 2 коллаборатора):
-    # author_association не гарантирует write-права (COLLABORATOR может быть
-    # read-only), а на issue_comment-пути не проверяется fork head-ветки —
-    # threshold-проверки при необходимости добавим в шаге Get PR context.
+    # Принятый остаточный риск (приватный репо, 2 коллаборатора):
+    # author_association не гарантирует write-права (COLLABORATOR может
+    # быть read-only). Fork head-ветка на issue_comment-пути закрыта
+    # fork-guard'ом в шаге Get PR context.
     if: |-
       github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
       || (
@@ -92,10 +92,22 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber
             });
+            // Fork-guard (security·high из ревью OCR): head из форка не
+            // ревьюим с нашими секретами — шаг прогона будет пропущен.
+            if (pullRequest.head.repo && pullRequest.head.repo.fork) {
+              core.notice('Fork PR: ревью с секретами запрещено — пропускаю.');
+              core.setOutput('fork', 'true');
+              return;
+            }
+            core.setOutput('fork', 'false');
             core.setOutput('base_ref', pullRequest.base.ref);
             core.setOutput('head_sha', pullRequest.head.sha);
 
       - name: Run OpenCodeReview
+        # Пропуск для форк-head PR из issue_comment-пути (fork-guard выше);
+        # для pull_request-событий шаг pr-context не выполнялся и выход
+        # пуст → != 'true' → прогон идёт штатно
+        if: steps.pr-context.outputs.fork != 'true'
         # Пин по commit SHA тега v1.12.8: action получает llm_auth_token и
         # пишет в PR — mutable-тег апстрима был бы supply-chain риском
         uses: alibaba/open-code-review@5c7b38381d1fdd36de6cf622a2a1f768243c4704 # v1.12.8
@@ -124,9 +136,14 @@ jobs:
           stream_progress: "true"
           # Один «липкий» summary-комментарий обновляется, а не дублируется
           sticky_summary: "true"
-          # Инкрементальные inline-комментарии — на следующую итерацию,
-          # после боевой проверки базового потока
-          incremental: "false"
+          # Инкрементальные inline-комментарии: не дублировать замечания
+          # между прогонами (скипаются совпадающие по path+line)
+          incremental: "true"
+          # Кросс-пушевые чекпоинты: после полного ревью следующий прогон
+          # ревьюит только <checkpoint>..<new head>; любое сомнение
+          # (сдвиг base, смена конфига, битая запись) — полный ревью
+          # (fail-closed). Требует sticky_summary ✓
+          checkpoint_range: "true"
           # Для issue_comment-триггера резолвим base/head явно (pull_request-
           # события OCR берёт из payload; пустые строки игнорируются)
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
