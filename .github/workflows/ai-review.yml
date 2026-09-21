@@ -14,6 +14,8 @@ concurrency:
 
 jobs:
   review:
+    # Секреты на pull_request из форков не передаются — тихий skip
+    if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -24,8 +26,8 @@ jobs:
           gh api \
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
             --header "Accept: application/vnd.github.diff" > pr.diff
-          # Ограничиваем размер промпта: 60KB diff
-          head -c 60000 pr.diff > pr.diff.tmp && mv pr.diff.tmp pr.diff
+          # Ограничиваем промпт 60KB: режем по границе строки UTF-8 и помечаем усечение
+          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>=60000 else s; open('pr.diff','w').write(s)"
           echo "diff size: $(wc -c < pr.diff) bytes"
 
       - name: Call AI reviewer
@@ -54,14 +56,15 @@ jobs:
                 }
               ]
             }' > payload.json
-          HTTP=$(curl -sS -w "%{http_code}" -o response.json \
+          HTTP=$(curl -sS --max-time 120 --retry 2 -w "%{http_code}" -o response.json \
             https://llm.outzzz.tech/v1/chat/completions \
             -H "Authorization: Bearer $LITELLM_KEY" \
             -H "Content-Type: application/json" \
             --data @payload.json)
           echo "HTTP $HTTP"
+          echo "HTTP_CODE=$HTTP" >> "$GITHUB_ENV"
           jq -r 'if .choices[0].message.content then .choices[0].message.content
-                 else "⚠️ Ревьюер не вернул ответ.\n```json\n" + (.error | tostring // .) + "\n```" end' \
+                 else "⚠️ Ревьюер не вернул ответ.\n```json\n" + tostring + "\n```" end' \
             response.json > review.md
 
       - name: Post review comment
@@ -75,3 +78,7 @@ jobs:
           } > comment.md
           gh pr comment "${{ github.event.pull_request.number }}" \
             -R "${{ github.repository }}" --body-file comment.md
+          if [ "${HTTP_CODE:-200}" -lt 200 ] || [ "${HTTP_CODE:-200}" -ge 300 ]; then
+            echo "::error::LiteLLM вернул HTTP $HTTP_CODE"
+            exit 1
+          fi
