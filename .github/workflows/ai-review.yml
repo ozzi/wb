@@ -2,7 +2,7 @@ name: AI Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -27,6 +27,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # не оставлять GITHUB_TOKEN в .git/config — агент идёт с full access
+          persist-credentials: false
 
       - name: Collect PR diff
         env:
@@ -77,9 +80,9 @@ jobs:
             Описание: ${PR_BODY:-нет описания}
 
             Diff PR (файл pr.diff, также доступен в корне репо):
-            \`\`\`diff
+            \`\`\`\`diff
             $(cat pr.diff)
-            \`\`\`"
+            \`\`\`\`"
           RC=$?
           set -e
           echo "codex exit code: $RC"
