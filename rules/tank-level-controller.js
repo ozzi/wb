@@ -44,16 +44,25 @@ function makeTankLevelController(
         }
     });
 
-    function getSensorState(topic) {
-        var raw = !!dev[topic];
+    function getSensorState(raw) {
         var invert = !!dev[deviceName]["invert_sensors"];
         return invert ? !raw : raw;
     }
 
     function evaluateAndApply() {
-        var bottom = getSensorState(bottomSensorTopic);
-        var middle = getSensorState(middleSensorTopic);
-        var top = getSensorState(topSensorTopic);
+        var bottomRaw = dev[bottomSensorTopic];
+        var middleRaw = dev[middleSensorTopic];
+        var topRaw = dev[topSensorTopic];
+
+        // Нет данных хотя бы от одного датчика (например, при старте до прихода
+        // retained-значений из MQTT) — не управляем клапаном вслепую
+        if (bottomRaw === undefined || middleRaw === undefined || topRaw === undefined) {
+            return;
+        }
+
+        var bottom = getSensorState(bottomRaw);
+        var middle = getSensorState(middleRaw);
+        var top = getSensorState(topRaw);
 
         var autoMode = !!dev[deviceName]["auto_mode"];
         var forceFill = !!dev[deviceName]["force_fill"];
@@ -151,8 +160,9 @@ function makeTankLevelController(
         }
     });
 
-    // Первоначальное вычисление состояния при старте правила
-    evaluateAndApply();
+    // Первоначальное вычисление состояния при старте правила — с debounce,
+    // чтобы к моменту расчёта успели прийти retained-значения датчиков
+    scheduleEvaluation();
 }
 
 makeTankLevelController(

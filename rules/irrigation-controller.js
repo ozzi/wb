@@ -38,8 +38,9 @@ function makeIrrigationController(
         var tankStatus = dev[tankStatusTopic];
         var maintenance = !!dev[deviceName]["maintenance_mode"];
         
-        // Разрешаем полив, если нет сервисного режима и бак не пустой/не в ошибке
-        var allowed = !maintenance && (tankStatus !== "empty" && tankStatus !== "error");
+        // Разрешаем полив только при известном статусе бака и вне сервисного режима.
+        // При старте, пока статус бака не пришёл (undefined), полив запрещён.
+        var allowed = !maintenance && (tankStatus === "low" || tankStatus === "medium" || tankStatus === "full");
         
         if (dev[deviceName]["watering_allowed"] !== allowed) {
             dev[deviceName]["watering_allowed"] = allowed;
