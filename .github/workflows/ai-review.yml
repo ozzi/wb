@@ -2,7 +2,7 @@ name: AI Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -18,11 +18,8 @@ env:
 jobs:
   review:
     # Секреты на pull_request из форков не передаются — тихий skip.
-    # Стоимость: гоняем только по лейблу ai-review (kill-switch против
-    # случайных прогонов на каждый push)
-    if: >-
-      github.event.pull_request.head.repo.fork == false &&
-      contains(github.event.pull_request.labels.*.name, 'ai-review')
+    # Ревью запускается автоматически на каждый MR и каждый push в него.
+    if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
