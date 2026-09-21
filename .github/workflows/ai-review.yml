@@ -110,6 +110,9 @@ jobs:
           language: "Russian"
           # Пин CLI: без него action ставит latest с npm
           ocr_version: "1.12.8"
+          # DeepSeek-flash через LiteLLM иногда отвечает дольше 300с
+          # на запрос (run 35612743351: 2 × timeout) — поднят до 600
+          llm_timeout: "600"
           # Жёсткий токен-кап на прогон (страховка к LiteLLM-бюджету):
           # перерасход репортится как failed(budget), частичный результат
           # публикуется, exit 0
