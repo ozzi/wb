@@ -10,7 +10,8 @@ jobs:
     # write-доступ триггера (check-write-access) — двойной фильтр
     if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Нормальное ревью ~5 мин; 8 — жёсткий потолок против блуждания
+    timeout-minutes: 8
     permissions:
       contents: read
     outputs:
@@ -23,14 +24,24 @@ jobs:
           # не оставлять GITHUB_TOKEN в .git/config
           persist-credentials: false
 
-      - name: Pre-fetch base and head refs
+      - name: Collect PR diff
         env:
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch --no-tags origin \
-            "$PR_BASE_REF" \
-            "+refs/pull/$PR_NUMBER/head"
+          gh api \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            --header "Accept: application/vnd.github.diff" > pr.diff
+          # Ограничиваем промпт 60KB: режем по границе строки UTF-8 и помечаем усечение
+          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>60000 else s; open('pr.diff','w').write(s)"
+          echo "diff size: $(wc -c < pr.diff) bytes"
+
+      - name: Pre-configure Codex home
+        run: |
+          mkdir -p ~/.codex
+          {
+            echo '[tools]'
+            echo 'web_search = false'
+          } > ~/.codex/config.toml
 
       - name: Run Codex
         id: run_codex
@@ -47,24 +58,30 @@ jobs:
           # эфемерность раннера. Вернуть read-only после фикса апстрима.
           sandbox: "danger-full-access"
           prompt: |
-            Ты — строгий, но доброжелательный код-ревьюер проекта Wiren Board.
-            Конвенции проекта — см. AGENTS.md в корне репо (codex подгружает его автоматически):
-            код в rules/ выполняется движком wb-rules (НЕ Node.js), стиль ECMAScript 5,
-            минимальный diff, никакого лишнего рефакторинга.
+            РОЛЬ: ты — code reviewer проекта Wiren Board. Твоя ЕДИНСТВЕННАЯ задача —
+            анализ изменений конкретного PR. Это не аудит инфраструктуры.
+
+            ВНЕ СКОУПА (не исследуй, не проверяй, не комментируй):
+            - безопасность самого CI/workflow/раннера и песочниц;
+            - переменные окружения, секреты, метаданные процесса;
+            - инфраструктура репо, если она не часть diff'а.
+            Считаешь, что что-то важное вне скоупа — одна строка
+            «⚠️ вне скоупа ревьюера: ...» в конце ревью, БЕЗ исследования.
+
+            ЧТО РЕВЬЮИРОВАТЬ:
+            - diff текущего PR — готовый файл `pr.diff` в корне репо, открой его первым
+              и последним делом;
+            - максимум 8 инструментальных вызовов суммарно: pr.diff + 2-3 файла контекста.
+            Конвенции — AGENTS.md (wb-rules, ECMAScript 5, минимальный diff).
+
+            ФОРМАТ (markdown, русский, термины в оригинале):
+            1. Резюме — 1-2 предложения.
+            2. «🔴 Блокер» / «🟡 Замечание» / «🟢 Хорошо» — при наличии.
+            3. Файлы и строки diff'а.
+            4. Нет критичных проблем — прямо напиши «можно мержить».
+            Не выдумывай проблемы ради объёма. Изменения не вноси.
 
             Это PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
-            Описание: ${{ github.event.pull_request.body }}
-
-            Ревьюируй ТОЛЬКО изменения PR. Посмотреть их можно так:
-            git diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
-            Ты можешь читать любые файлы репо для контекста.
-
-            Формат ответа (markdown, на русском, техтермины в оригинале):
-            1. Краткое резюме — 1-2 предложения.
-            2. Блоки «🔴 Блокер», «🟡 Замечание», «🟢 Хорошо» (если есть что сказать).
-            3. Ссылайся на конкретные файлы и строки.
-            4. Если критичных проблем нет — прямо скажи, что PR можно мержить.
-            Не выдумывай проблемы ради объёма. Изменения не вноси — ты ревьюер.
 
   post_feedback:
     runs-on: ubuntu-latest
