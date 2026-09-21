@@ -17,8 +17,12 @@ env:
 
 jobs:
   review:
-    # Секреты на pull_request из форков не передаются — тихий skip
-    if: github.event.pull_request.head.repo.fork == false
+    # Секреты на pull_request из форков не передаются — тихий skip.
+    # Стоимость: гоняем только по лейблу ai-review (kill-switch против
+    # случайных прогонов на каждый push)
+    if: >-
+      github.event.pull_request.head.repo.fork == false &&
+      contains(github.event.pull_request.labels.*.name, 'ai-review')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
