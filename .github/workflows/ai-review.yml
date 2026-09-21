@@ -4,104 +4,86 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  pull-requests: write
-
-concurrency:
-  group: ai-review-pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-env:
-  CODEX_VERSION: "0.155.1"
-
 jobs:
-  review:
-    # Секреты на pull_request из форков не передаются — тихий skip.
-    # Ревью запускается автоматически на каждый MR и каждый push в него.
+  codex:
+    # Секреты на pull_request из форков не передаются + action проверяет
+    # write-доступ триггера (check-write-access) — двойной фильтр
     if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # не оставлять GITHUB_TOKEN в .git/config — агент идёт с full access
+          # явно чекаутим merge-коммит PR (рекомендация codex-action)
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          # не оставлять GITHUB_TOKEN в .git/config
           persist-credentials: false
 
-      - name: Collect PR diff
+      - name: Pre-fetch base and head refs
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api \
-            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
-            --header "Accept: application/vnd.github.diff" > pr.diff
-          # Ограничиваем промпт 60KB: режем по границе строки UTF-8 и помечаем усечение
-          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>60000 else s; open('pr.diff','w').write(s)"
-          echo "diff size: $(wc -c < pr.diff) bytes"
-
-      - name: Install Codex CLI
-        run: npm install -g "@openai/codex@${CODEX_VERSION}"
-
-      - name: Configure Codex → LiteLLM
-        run: |
-          mkdir -p ~/.codex
-          {
-            echo 'model = "agent/reviewer"'
-            echo 'model_provider = "litellm"'
-            echo ''
-            echo '[model_providers.litellm]'
-            echo 'name = "LiteLLM"'
-            echo 'base_url = "https://llm.outzzz.tech/v1"'
-            echo 'env_key = "LITELLM_REVIEWER_KEY"'
-            echo 'wire_api = "responses"'
-            echo ''
-            echo '[shell_environment_policy]'
-            echo 'inherit = "none"'
-            echo 'set = { PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", HOME = "/home/runner", USER = "runner" }'
-          } > ~/.codex/config.toml
-
-      - name: AI Review (headless Codex)
-        env:
-          LITELLM_REVIEWER_KEY: ${{ secrets.LITELLM_REVIEWER_KEY }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          set +e
-          # danger-full-access: bundled bwrap не работает на hosted-раннерах
-          # (RTM_NEWADDR denied), изоляция обеспечивается эфемерностью раннера
-          # + минимальными permissions. Diff дублируем в промпт — ревью не
-          # зависит от файлового доступа.
-          codex exec \
-            --sandbox danger-full-access \
-            --output-last-message review.md \
-            "$(cat .github/review-prompt.md)
+          git fetch --no-tags origin \
+            "$PR_BASE_REF" \
+            "+refs/pull/$PR_NUMBER/head"
 
-            Ревьюируемый PR #${PR_NUMBER}: ${PR_TITLE}
-            Описание: ${PR_BODY:-нет описания}
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          # LiteLLM как Responses API upstream
+          responses-api-endpoint: "https://llm.outzzz.tech/v1/responses"
+          openai-api-key: ${{ secrets.LITELLM_REVIEWER_KEY }}
+          model: "agent/reviewer"
+          codex-version: "0.155.1"
+          # bwrap-песочница codex сломана на hosted-раннерах (RTM_NEWADDR,
+          # openai/codex#15957); изоляцию обеспечивают drop-sudo (дефолт
+          # safety-strategy), отсутствие ключа в окружении агента и
+          # эфемерность раннера. Вернуть read-only после фикса апстрима.
+          sandbox: "danger-full-access"
+          prompt: |
+            Ты — строгий, но доброжелательный код-ревьюер проекта Wiren Board.
+            Конвенции проекта — см. AGENTS.md в корне репо (codex подгружает его автоматически):
+            код в rules/ выполняется движком wb-rules (НЕ Node.js), стиль ECMAScript 5,
+            минимальный diff, никакого лишнего рефакторинга.
 
-            Diff PR (файл pr.diff, также доступен в корне репо):
-            \`\`\`\`diff
-            $(cat pr.diff)
-            \`\`\`\`"
-          RC=$?
-          set -e
-          echo "codex exit code: $RC"
-          [ -s review.md ] || echo "⚠️ Ревьюер не вернул ответ (код $RC, см. логи workflow)" > review.md
-          echo "CODEX_RC=$RC" >> "$GITHUB_ENV"
+            Это PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
+            Описание: ${{ github.event.pull_request.body }}
 
+            Ревьюируй ТОЛЬКО изменения PR. Посмотреть их можно так:
+            git diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+            Ты можешь читать любые файлы репо для контекста.
+
+            Формат ответа (markdown, на русском, техтермины в оригинале):
+            1. Краткое резюме — 1-2 предложения.
+            2. Блоки «🔴 Блокер», «🟡 Замечание», «🟢 Хорошо» (если есть что сказать).
+            3. Ссылайся на конкретные файлы и строки.
+            4. Если критичных проблем нет — прямо скажи, что PR можно мержить.
+            Не выдумывай проблемы ради объёма. Изменения не вноси — ты ревьюер.
+
+  post_feedback:
+    runs-on: ubuntu-latest
+    needs: codex
+    if: needs.codex.outputs.final_message != ''
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
       - name: Post review comment
+        uses: actions/github-script@v7
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          {
-            echo "## 🤖 AI Review — \`agent/reviewer\` (codex headless)"
-            echo
-            cat review.md
-          } > comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            -R "${{ github.repository }}" --body-file comment.md
-          if [ "${CODEX_RC:-0}" -ne 0 ]; then
-            echo "::error::codex exec завершился с кодом $CODEX_RC"
-            exit 1
-          fi
+          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: "## 🤖 AI Review — `agent/reviewer` (codex-action)\n\n" + process.env.CODEX_FINAL_MESSAGE,
+            });
