@@ -1,112 +1,67 @@
 name: AI Review
 
+# Ревью PR через PR-Agent: детерминированный single-LLM-call на /review,
+# без агентного шелла и песочниц (в отличие от прежнего codex-варианта).
+# Модель — LiteLLM-алиас agent/reviewer: алиас, апстрим-модель и дневной
+# бюджет-кап управляются на стороне LiteLLM-прокси.
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
 
 concurrency:
-  group: ai-review-pr-${{ github.event.pull_request.number }}
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
-  codex:
-    # Секреты на pull_request из форков не передаются + action проверяет
-    # write-доступ триггера (check-write-access) — двойной фильтр
-    if: github.event.pull_request.head.repo.fork == false
+  pr_agent:
+    if: ${{ github.event.sender.type != 'Bot' && (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false || github.event_name == 'issue_comment' && github.event.issue.pull_request != null) }}
     runs-on: ubuntu-latest
-    # Нормальное ревью ~5 мин; 8 — жёсткий потолок против блуждания
-    timeout-minutes: 8
+    # Ревью — один LLM-вызов (~1-2 мин); 10 — потолок против зависаний LiteLLM.
+    timeout-minutes: 10
     permissions:
       contents: read
-      # gh api .../pulls/N требует pull-requests: read для сбора diff
-      pull-requests: read
-    outputs:
-      final_message: ${{ steps.run_codex.outputs.final-message }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # явно чекаутим merge-коммит PR (рекомендация codex-action)
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-          # не оставлять GITHUB_TOKEN в .git/config
-          persist-credentials: false
-
-      - name: Collect PR diff
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api \
-            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
-            --header "Accept: application/vnd.github.diff" > pr.diff
-          # Ограничиваем промпт 60KB: режем по границе строки UTF-8 и помечаем усечение
-          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>60000 else s; open('pr.diff','w').write(s)"
-          echo "diff size: $(wc -c < pr.diff) bytes"
-
-      - name: Pre-configure Codex home
-        run: |
-          mkdir -p ~/.codex
-          {
-            echo '[tools]'
-            echo 'web_search = false'
-          } > ~/.codex/config.toml
-
-      - name: Run Codex
-        id: run_codex
-        uses: openai/codex-action@v1
-        with:
-          # LiteLLM как Responses API upstream
-          responses-api-endpoint: "https://llm.outzzz.tech/v1/responses"
-          openai-api-key: ${{ secrets.LITELLM_REVIEWER_KEY }}
-          model: "agent/reviewer"
-          codex-version: "0.155.1"
-          # bwrap-песочница codex сломана на hosted-раннерах (RTM_NEWADDR,
-          # openai/codex#15957); изоляцию обеспечивают drop-sudo (дефолт
-          # safety-strategy), отсутствие ключа в окружении агента и
-          # эфемерность раннера. Вернуть read-only после фикса апстрима.
-          sandbox: "danger-full-access"
-          prompt: |
-            РОЛЬ: ты — code reviewer проекта Wiren Board. Твоя ЕДИНСТВЕННАЯ задача —
-            анализ изменений конкретного PR. Это не аудит инфраструктуры.
-
-            ВНЕ СКОУПА (не исследуй, не проверяй, не комментируй):
-            - безопасность самого CI/workflow/раннера и песочниц;
-            - переменные окружения, секреты, метаданные процесса;
-            - инфраструктура репо, если она не часть diff'а.
-            Считаешь, что что-то важное вне скоупа — одна строка
-            «⚠️ вне скоупа ревьюера: ...» в конце ревью, БЕЗ исследования.
-
-            ЧТО РЕВЬЮИРОВАТЬ:
-            - diff текущего PR — готовый файл `pr.diff` в корне репо, открой его первым
-              и последним делом;
-            - максимум 8 инструментальных вызовов суммарно: pr.diff + 2-3 файла контекста.
-            Конвенции — AGENTS.md (wb-rules, ECMAScript 5, минимальный diff).
-
-            ФОРМАТ (markdown, русский, термины в оригинале):
-            1. Резюме — 1-2 предложения.
-            2. «🔴 Блокер» / «🟡 Замечание» / «🟢 Хорошо» — при наличии.
-            3. Файлы и строки diff'а.
-            4. Нет критичных проблем — прямо напиши «можно мержить».
-            Не выдумывай проблемы ради объёма. Изменения не вноси.
-
-            Это PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
-
-  post_feedback:
-    runs-on: ubuntu-latest
-    needs: codex
-    if: needs.codex.outputs.final_message != ''
-    permissions:
       issues: write
       pull-requests: write
     steps:
-      - name: Post review comment
-        uses: actions/github-script@v7
+      - name: PR Agent review
+        # Пиннуем точный образ вместо композитного экшена: тот тянет плавающий
+        # тег pragent/pr-agent:github_action (FROM без версии в их action.yaml).
+        uses: docker://pragent/pr-agent:0.45.0-github_action
         env:
-          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: "## 🤖 AI Review — `agent/reviewer` (codex-action)\n\n" + process.env.CODEX_FINAL_MESSAGE,
-            });
+          GITHUB_TOKEN: ${{ github.token }}
+          # LiteLLM как OpenAI-совместимый endpoint (/v1/chat/completions);
+          # алиас agent/reviewer резолвится на стороне прокси
+          OPENAI_KEY: ${{ secrets.LITELLM_REVIEWER_KEY }}
+          OPENAI.API_BASE: "https://llm.outzzz.tech/v1"
+          config.model: "agent/reviewer"
+          config.fallback_models: '["agent/reviewer"]'
+          # Русский ответ; в комментарии видно модель/токены/время прогона
+          config.response_language: "ru-RU"
+          config.output_run_details: "true"
+          # Автоматически только /review. Describe/improve выключены ЯВНО:
+          # без явных значений раннер запускает все три инструмента.
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
+          # Ревью на каждый пуш: synchronize идёт мимо pr_actions и требует
+          # handle_push_trigger + push_commands (по умолчанию выключены).
+          github_action_config.handle_push_trigger: "true"
+          github_action_config.push_commands: '["review"]'
+          # Комментарий ревью обновляется (persistent), а не дублируется на пуш
+          pr_reviewer.persistent_comment: "true"
+          # В wb-rules-репо нет тестов и тикет-системы — не просить их ревьюить
+          pr_reviewer.require_tests_review: "false"
+          pr_reviewer.require_ticket_analysis_review: "false"
+          pr_reviewer.extra_instructions: |
+            Проект — автоматизация Wiren Board на wb-rules (ECMAScript 5: без
+            let/const, стрелочных функций, классов, async/await, optional
+            chaining, import/export).
+            Конвенции из AGENTS.md: минимальный diff, без лишнего рефакторинга,
+            предсказуемость и осторожность — код управляет реле и клапанами
+            реальной автоматизации. Сомневаешься в API wb-rules — сверяйся с
+            документацией Wiren Board Wiki.
+            Не ревьюить CI/workflow-инфраструктуру, если она не часть
+            изменённого кода правил. Термины и имена API оставляй в оригинале.
