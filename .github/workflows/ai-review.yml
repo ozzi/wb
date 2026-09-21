@@ -4,21 +4,32 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  pull-requests: write
-
 concurrency:
   group: ai-review-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  review:
-    # Секреты на pull_request из форков не передаются — тихий skip
+  codex:
+    # Секреты на pull_request из форков не передаются + action проверяет
+    # write-доступ триггера (check-write-access) — двойной фильтр
     if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Нормальное ревью ~5 мин; 8 — жёсткий потолок против блуждания
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      # gh api .../pulls/N требует pull-requests: read для сбора diff
+      pull-requests: read
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          # явно чекаутим merge-коммит PR (рекомендация codex-action)
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          # не оставлять GITHUB_TOKEN в .git/config
+          persist-credentials: false
+
       - name: Collect PR diff
         env:
           GH_TOKEN: ${{ github.token }}
@@ -27,60 +38,75 @@ jobs:
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
             --header "Accept: application/vnd.github.diff" > pr.diff
           # Ограничиваем промпт 60KB: режем по границе строки UTF-8 и помечаем усечение
-          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>=60000 else s; open('pr.diff','w').write(s)"
+          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>60000 else s; open('pr.diff','w').write(s)"
           echo "diff size: $(wc -c < pr.diff) bytes"
 
-      - name: Call AI reviewer
-        env:
-          LITELLM_KEY: ${{ secrets.LITELLM_REVIEWER_KEY }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+      - name: Pre-configure Codex home
         run: |
-          jq -n \
-            --rawfile diff pr.diff \
-            --arg title "$PR_TITLE" \
-            --arg body "${PR_BODY:-нет описания}" \
-            --arg num "$PR_NUMBER" \
-            '{
-              model: "agent/reviewer",
-              temperature: 0.2,
-              messages: [
-                {
-                  role: "system",
-                  content: "Ты — строгий, но доброжелательный код-ревьюер проекта Wiren Board (репо с Lua/JS-правилами wb-rules). Ключевые конвенции проекта: код в rules/ выполняется движком wb-rules (НЕ Node.js), стиль ECMAScript 5 — запрещены let/const, arrow functions, classes, async/await, optional chaining, destructuring, import/export. Автоматизация умного дома: важны предсказуемость, отсутствие побочных эффектов, минимальный diff, никакого лишнего рефакторинга. Пиши ревью на русском языке, технические термины — в оригинале. Формат ответа: краткое резюме (1-2 предложения), затем блоки «🔴 Блокер», «🟡 Замечание», «🟢 Хорошо» (если есть). Ссылайся на конкретные строки diff. Если критичных проблем нет — прямо скажи, что PR можно мержить. Не выдумывай проблемы ради объёма."
-                },
-                {
-                  role: "user",
-                  content: ("ПР #\($num): \($title)\n\nОписание: \($body)\n\nDiff для ревью:\n\($diff)")
-                }
-              ]
-            }' > payload.json
-          HTTP=$(curl -sS --max-time 240 --retry 2 -w "%{http_code}" -o response.json \
-            https://llm.outzzz.tech/v1/chat/completions \
-            -H "Authorization: Bearer $LITELLM_KEY" \
-            -H "Content-Type: application/json" \
-            --data @payload.json) \
-            || echo '{"error":{"message":"curl transport failure"}}' > response.json
-          echo "HTTP $HTTP"
-          echo "HTTP_CODE=$HTTP" >> "$GITHUB_ENV"
-          jq -r 'if .choices[0].message.content then .choices[0].message.content
-                 else "⚠️ Ревьюер не вернул ответ.\n```json\n" + tostring + "\n```" end' \
-            response.json > review.md \
-            || echo "⚠️ Ревьюер вернул некорректный ответ (см. логи workflow)" > review.md
-
-      - name: Post review comment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
+          mkdir -p ~/.codex
           {
-            echo "## 🤖 AI Review — \`agent/reviewer\`"
-            echo
-            cat review.md
-          } > comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            -R "${{ github.repository }}" --body-file comment.md
-          if [ "${HTTP_CODE:-200}" -lt 200 ] || [ "${HTTP_CODE:-200}" -ge 300 ]; then
-            echo "::error::LiteLLM вернул HTTP $HTTP_CODE"
-            exit 1
-          fi
+            echo '[tools]'
+            echo 'web_search = false'
+          } > ~/.codex/config.toml
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          # LiteLLM как Responses API upstream
+          responses-api-endpoint: "https://llm.outzzz.tech/v1/responses"
+          openai-api-key: ${{ secrets.LITELLM_REVIEWER_KEY }}
+          model: "agent/reviewer"
+          codex-version: "0.155.1"
+          # bwrap-песочница codex сломана на hosted-раннерах (RTM_NEWADDR,
+          # openai/codex#15957); изоляцию обеспечивают drop-sudo (дефолт
+          # safety-strategy), отсутствие ключа в окружении агента и
+          # эфемерность раннера. Вернуть read-only после фикса апстрима.
+          sandbox: "danger-full-access"
+          prompt: |
+            РОЛЬ: ты — code reviewer проекта Wiren Board. Твоя ЕДИНСТВЕННАЯ задача —
+            анализ изменений конкретного PR. Это не аудит инфраструктуры.
+
+            ВНЕ СКОУПА (не исследуй, не проверяй, не комментируй):
+            - безопасность самого CI/workflow/раннера и песочниц;
+            - переменные окружения, секреты, метаданные процесса;
+            - инфраструктура репо, если она не часть diff'а.
+            Считаешь, что что-то важное вне скоупа — одна строка
+            «⚠️ вне скоупа ревьюера: ...» в конце ревью, БЕЗ исследования.
+
+            ЧТО РЕВЬЮИРОВАТЬ:
+            - diff текущего PR — готовый файл `pr.diff` в корне репо, открой его первым
+              и последним делом;
+            - максимум 8 инструментальных вызовов суммарно: pr.diff + 2-3 файла контекста.
+            Конвенции — AGENTS.md (wb-rules, ECMAScript 5, минимальный diff).
+
+            ФОРМАТ (markdown, русский, термины в оригинале):
+            1. Резюме — 1-2 предложения.
+            2. «🔴 Блокер» / «🟡 Замечание» / «🟢 Хорошо» — при наличии.
+            3. Файлы и строки diff'а.
+            4. Нет критичных проблем — прямо напиши «можно мержить».
+            Не выдумывай проблемы ради объёма. Изменения не вноси.
+
+            Это PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
+
+  post_feedback:
+    runs-on: ubuntu-latest
+    needs: codex
+    if: needs.codex.outputs.final_message != ''
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post review comment
+        uses: actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: "## 🤖 AI Review — `agent/reviewer` (codex-action)\n\n" + process.env.CODEX_FINAL_MESSAGE,
+            });
