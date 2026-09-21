@@ -56,11 +56,12 @@ jobs:
                 }
               ]
             }' > payload.json
-          HTTP=$(curl -sS --max-time 120 --retry 2 -w "%{http_code}" -o response.json \
+          HTTP=$(curl -sS --max-time 240 --retry 2 -w "%{http_code}" -o response.json \
             https://llm.outzzz.tech/v1/chat/completions \
             -H "Authorization: Bearer $LITELLM_KEY" \
             -H "Content-Type: application/json" \
-            --data @payload.json)
+            --data @payload.json) \
+            || echo '{"error":{"message":"curl transport failure"}}' > response.json
           echo "HTTP $HTTP"
           echo "HTTP_CODE=$HTTP" >> "$GITHUB_ENV"
           jq -r 'if .choices[0].message.content then .choices[0].message.content
