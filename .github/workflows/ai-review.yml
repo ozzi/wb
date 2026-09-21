@@ -1,112 +1,152 @@
 name: AI Review
 
+# Ревью PR через OpenCodeReview (alibaba/open-code-review): гибрид
+# «детерминированные пайплайны + LLM-агент» — селекция/бандлинг файлов,
+# матчинг правил и позиционирование комментариев делаются кодом, агенту
+# остаются только динамические решения и чтение контекста.
+# Модель — LiteLLM-алиас agent/reviewer: алиас, апстрим-модель и дневной
+# бюджет-кап управляются на стороне LiteLLM-прокси.
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
 
+# Конкурентность по PR. Нюанс из их примера: GitHub оценивает concurrency
+# ДО job-level if — плоская группа от любого комментария к PR убивала бы
+# идущее ревью. Совпадающие события (PR-события + команды /open-code-review
+# от членов) делят группу ocr-<pr>, прочие комментарии уходят в noop-группу
+# этого прогона и скипаются мгновенно.
 concurrency:
-  group: ai-review-pr-${{ github.event.pull_request.number }}
+  group: >-
+    ${{
+      (
+        github.event_name == 'pull_request'
+        || (
+          github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && github.event.comment.user.type != 'Bot'
+          && (
+            github.event.comment.author_association == 'MEMBER'
+            || github.event.comment.author_association == 'OWNER'
+            || github.event.comment.author_association == 'COLLABORATOR'
+          )
+          && (
+            startsWith(github.event.comment.body, '/open-code-review')
+            || startsWith(github.event.comment.body, '@open-code-review')
+          )
+        )
+      )
+      && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+      || format('noop-{0}', github.run_id)
+    }}
   cancel-in-progress: true
 
 jobs:
-  codex:
-    # Секреты на pull_request из форков не передаются + action проверяет
-    # write-доступ триггера (check-write-access) — двойной фильтр
-    if: github.event.pull_request.head.repo.fork == false
+  code-review:
+    # PR-события: только не-форки (секреты на форки не выдаются).
+    # Комментарии: только люди с write-доступом и только команды
+    # /open-code-review или @open-code-review — чужие комментарии
+    # не тратят квоту LLM.
+    # Принятый остаточный риск (приватный репо, 2 коллаборатора):
+    # author_association не гарантирует write-права (COLLABORATOR может
+    # быть read-only). Fork head-ветка на issue_comment-пути закрыта
+    # fork-guard'ом в шаге Get PR context.
+    if: |-
+      github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+      || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.user.type != 'Bot'
+        && (
+          github.event.comment.author_association == 'MEMBER'
+          || github.event.comment.author_association == 'OWNER'
+          || github.event.comment.author_association == 'COLLABORATOR'
+        )
+        && (
+          startsWith(github.event.comment.body, '/open-code-review')
+          || startsWith(github.event.comment.body, '@open-code-review')
+        )
+      )
     runs-on: ubuntu-latest
-    # Нормальное ревью ~5 мин; 8 — жёсткий потолок против блуждания
-    timeout-minutes: 8
+    # Обычное ревью ~2-5 мин; 25 — потолок против блуждания.
+    timeout-minutes: 25
     permissions:
       contents: read
-      # gh api .../pulls/N требует pull-requests: read для сбора diff
-      pull-requests: read
-    outputs:
-      final_message: ${{ steps.run_codex.outputs.final-message }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # явно чекаутим merge-коммит PR (рекомендация codex-action)
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-          # не оставлять GITHUB_TOKEN в .git/config
-          persist-credentials: false
-
-      - name: Collect PR diff
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api \
-            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
-            --header "Accept: application/vnd.github.diff" > pr.diff
-          # Ограничиваем промпт 60KB: режем по границе строки UTF-8 и помечаем усечение
-          python3 -c "d=open('pr.diff','rb').read()[:60000]; s=d.decode('utf-8','ignore'); s=(s.rsplit('\n',1)[0]+'\n\n[!] diff усечён до 60KB') if len(d)>60000 else s; open('pr.diff','w').write(s)"
-          echo "diff size: $(wc -c < pr.diff) bytes"
-
-      - name: Pre-configure Codex home
-        run: |
-          mkdir -p ~/.codex
-          {
-            echo '[tools]'
-            echo 'web_search = false'
-          } > ~/.codex/config.toml
-
-      - name: Run Codex
-        id: run_codex
-        uses: openai/codex-action@v1
-        with:
-          # LiteLLM как Responses API upstream
-          responses-api-endpoint: "https://llm.outzzz.tech/v1/responses"
-          openai-api-key: ${{ secrets.LITELLM_REVIEWER_KEY }}
-          model: "agent/reviewer"
-          codex-version: "0.155.1"
-          # bwrap-песочница codex сломана на hosted-раннерах (RTM_NEWADDR,
-          # openai/codex#15957); изоляцию обеспечивают drop-sudo (дефолт
-          # safety-strategy), отсутствие ключа в окружении агента и
-          # эфемерность раннера. Вернуть read-only после фикса апстрима.
-          sandbox: "danger-full-access"
-          prompt: |
-            РОЛЬ: ты — code reviewer проекта Wiren Board. Твоя ЕДИНСТВЕННАЯ задача —
-            анализ изменений конкретного PR. Это не аудит инфраструктуры.
-
-            ВНЕ СКОУПА (не исследуй, не проверяй, не комментируй):
-            - безопасность самого CI/workflow/раннера и песочниц;
-            - переменные окружения, секреты, метаданные процесса;
-            - инфраструктура репо, если она не часть diff'а.
-            Считаешь, что что-то важное вне скоупа — одна строка
-            «⚠️ вне скоупа ревьюера: ...» в конце ревью, БЕЗ исследования.
-
-            ЧТО РЕВЬЮИРОВАТЬ:
-            - diff текущего PR — готовый файл `pr.diff` в корне репо, открой его первым
-              и последним делом;
-            - максимум 8 инструментальных вызовов суммарно: pr.diff + 2-3 файла контекста.
-            Конвенции — AGENTS.md (wb-rules, ECMAScript 5, минимальный diff).
-
-            ФОРМАТ (markdown, русский, термины в оригинале):
-            1. Резюме — 1-2 предложения.
-            2. «🔴 Блокер» / «🟡 Замечание» / «🟢 Хорошо» — при наличии.
-            3. Файлы и строки diff'а.
-            4. Нет критичных проблем — прямо напиши «можно мержить».
-            Не выдумывай проблемы ради объёма. Изменения не вноси.
-
-            Это PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
-
-  post_feedback:
-    runs-on: ubuntu-latest
-    needs: codex
-    if: needs.codex.outputs.final_message != ''
-    permissions:
+      # issues: write — sticky_summary постит комментарий через issues API;
+      # без него публикация может завязаться на тонкости маппинга прав PR
       issues: write
       pull-requests: write
     steps:
-      - name: Post review comment
+      - name: Get PR context
+        id: pr-context
+        if: github.event_name == 'issue_comment'
         uses: actions/github-script@v7
-        env:
-          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
         with:
-          github-token: ${{ github.token }}
           script: |
-            await github.rest.issues.createComment({
+            // issue_comment не несёт pull_request-поля верхнего уровня —
+            // резолвим base/head руками, чтобы OCR ревьюил правильный diff.
+            const prNumber = context.issue.number;
+            const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: "## 🤖 AI Review — `agent/reviewer` (codex-action)\n\n" + process.env.CODEX_FINAL_MESSAGE,
+              pull_number: prNumber
             });
+            // Fork-guard (security·high из ревью OCR): head из форка не
+            // ревьюим с нашими секретами — шаг прогона будет пропущен.
+            // head.repo == null (форк удалён/недоступен) тоже считаем
+            // форком — fail-closed, не fail-open.
+            if (!pullRequest.head.repo || pullRequest.head.repo.fork) {
+              core.notice('Fork PR: ревью с секретами запрещено — пропускаю.');
+              core.setOutput('fork', 'true');
+              return;
+            }
+            core.setOutput('fork', 'false');
+            core.setOutput('base_ref', pullRequest.base.ref);
+            core.setOutput('head_sha', pullRequest.head.sha);
+
+      - name: Run OpenCodeReview
+        # Пропуск для форк-head PR из issue_comment-пути (fork-guard выше);
+        # для pull_request-событий шаг pr-context не выполнялся и выход
+        # пуст → != 'true' → прогон идёт штатно
+        if: steps.pr-context.outputs.fork != 'true'
+        # Пин по commit SHA тега v1.12.8: action получает llm_auth_token и
+        # пишет в PR — mutable-тег апстрима был бы supply-chain риском
+        uses: alibaba/open-code-review@5c7b38381d1fdd36de6cf622a2a1f768243c4704 # v1.12.8
+        with:
+          # LiteLLM как OpenAI-совместимый endpoint (алиас резолвится
+          # на стороне прокси); токен — LITELLM_REVIEWER_KEY с бюджет-капом
+          llm_url: "https://llm.outzzz.tech/v1/chat/completions"
+          llm_auth_token: ${{ secrets.LITELLM_REVIEWER_KEY }}
+          llm_model: "agent/reviewer"
+          llm_use_anthropic: "false"
+          # Ответ ревью на русском
+          language: "Russian"
+          # Пин CLI: без него action ставит latest с npm
+          ocr_version: "1.12.8"
+          # DeepSeek-flash через LiteLLM иногда отвечает дольше 300с
+          # на запрос (run 35612743351: 2 × timeout) — поднят до 600
+          llm_timeout: "600"
+          # Пустой extra_body: дефолт экшена шлёт GLM-овский ключ "thinking",
+          # который прямой OpenAI API отвергнет как неизвестное поле
+          llm_extra_body: "{}"
+          # Жёсткий токен-кап на прогон (страховка к LiteLLM-бюджету):
+          # перерасход репортится как failed(budget), частичный результат
+          # публикуется, exit 0
+          max_tokens_budget: "200000"
+          # Прогресс прогона в лог workflow — прозрачность при валидации
+          stream_progress: "true"
+          # Один «липкий» summary-комментарий обновляется, а не дублируется
+          sticky_summary: "true"
+          # Инкрементальные inline-комментарии: не дублировать замечания
+          # между прогонами (скипаются совпадающие по path+line)
+          incremental: "true"
+          # Кросс-пушевые чекпоинты: после полного ревью следующий прогон
+          # ревьюит только <checkpoint>..<new head>; любое сомнение
+          # (сдвиг base, смена конфига, битая запись) — полный ревью
+          # (fail-closed). Требует sticky_summary ✓
+          checkpoint_range: "true"
+          # Для issue_comment-триггера резолвим base/head явно (pull_request-
+          # события OCR берёт из payload; пустые строки игнорируются)
+          base_ref: ${{ steps.pr-context.outputs.base_ref }}
+          head_sha: ${{ steps.pr-context.outputs.head_sha }}
