@@ -94,7 +94,9 @@ jobs:
             });
             // Fork-guard (security·high из ревью OCR): head из форка не
             // ревьюим с нашими секретами — шаг прогона будет пропущен.
-            if (pullRequest.head.repo && pullRequest.head.repo.fork) {
+            // head.repo == null (форк удалён/недоступен) тоже считаем
+            // форком — fail-closed, не fail-open.
+            if (!pullRequest.head.repo || pullRequest.head.repo.fork) {
               core.notice('Fork PR: ревью с секретами запрещено — пропускаю.');
               core.setOutput('fork', 'true');
               return;
