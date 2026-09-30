@@ -45,8 +45,10 @@ function makeTankLevelController(
     });
 
     function getSensorState(raw) {
+        // Активным считаем только заведомо "включённое" значение
+        var isOn = raw === true || raw === 1 || raw === "true" || raw === "1";
         var invert = !!dev[deviceName]["invert_sensors"];
-        return invert ? !raw : raw;
+        return invert ? !isOn : isOn;
     }
 
     function evaluateAndApply() {
@@ -54,9 +56,14 @@ function makeTankLevelController(
         var middleRaw = dev[middleSensorTopic];
         var topRaw = dev[topSensorTopic];
 
-        // Нет данных хотя бы от одного датчика (например, при старте до прихода
-        // retained-значений из MQTT) — не управляем клапаном вслепую
-        if (bottomRaw === undefined || middleRaw === undefined || topRaw === undefined) {
+        // Нет данных хотя бы от одного датчика (undefined/null — нет retained-значения
+        // или ошибка чтения, например при старте до прихода retained-значений из MQTT) —
+        // fail-safe: выключаем заполнение и клапан
+        if (bottomRaw == null || middleRaw == null || topRaw == null) {
+            dev[deviceName]["filling"] = false;
+            if (dev[valveRelayTopic] !== false) {
+                dev[valveRelayTopic] = false;
+            }
             return;
         }
 

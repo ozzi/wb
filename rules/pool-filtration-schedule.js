@@ -55,6 +55,11 @@ function isValidTimeStr(timeStr) {
     return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
 }
 
+// Валидный вес тарифа: конечное число в диапазоне 0..5
+function isValidWeight(weight) {
+    return typeof weight === "number" && isFinite(weight) && weight >= 0 && weight <= 5;
+}
+
 // Проверяет, попадает ли текущее время в окно вида "HH:MM-HH:MM"
 // Поддерживает окна, переходящие через полночь (например "23:00-01:00")
 function isCurrentTimeInWindow(windowStr) {
@@ -125,36 +130,81 @@ function sunriseSunsetSchedule(sunriseStr, sunsetStr, windows) {
 // windows: массив длительностей в минутах [пик, полупик, ночь].
 // Внутри каждой зоны минуты распределяются по её интервалам пропорционально
 // длине интервала; окно центрируется внутри интервала и зажимается в его границы.
+// Если минуты не помещаются в свою зону, остаток итеративно переносится
+// в другие зоны пропорционально их свободной вместимости; если свободной
+// вместимости нет — ограничиваем вместимостью зон.
 function optimizedSchedule(windows) {
     var result = [];
 
+    // Остаток минут по зонам, свободная и полная вместимость каждой зоны
+    var remaining = [];
+    var capacityFree = [];
+    var capacityTotal = [];
     for (var z = 0; z < TARIFF_ZONES.length; z++) {
-        var minutes = windows[z];
-        if (!minutes || minutes <= 0) { continue; }
-
-        var intervals = TARIFF_ZONES[z];
-        var totalLen = 0;
-        for (var i = 0; i < intervals.length; i++) {
-            totalLen += intervals[i][1] - intervals[i][0];
+        remaining.push(windows[z] > 0 ? windows[z] : 0);
+        var zoneLen = 0;
+        for (var i = 0; i < TARIFF_ZONES[z].length; i++) {
+            zoneLen += TARIFF_ZONES[z][i][1] - TARIFF_ZONES[z][i][0];
         }
-        if (totalLen <= 0) { continue; }
+        capacityFree.push(zoneLen);
+        capacityTotal.push(zoneLen);
+    }
 
-        for (var j = 0; j < intervals.length; j++) {
-            var is = intervals[j][0];
-            var ie = intervals[j][1];
-            var len = ie - is;
-            var alloc = minutes * len / totalLen;
+    // Итеративная дораспределка остатка
+    for (var pass = 0; pass < TARIFF_ZONES.length; pass++) {
+        var totalRemaining = 0;
+        for (z = 0; z < remaining.length; z++) {
+            totalRemaining += remaining[z];
+        }
+        if (totalRemaining <= 0) { break; }
 
-            var center = (is + ie) / 2;
-            var start = Math.round(center - alloc / 2);
-            var end   = Math.round(center + alloc / 2);
+        var unplaced = 0;
+        for (z = 0; z < TARIFF_ZONES.length; z++) {
+            if (remaining[z] <= 0 || capacityFree[z] <= 0) { continue; }
 
-            if (start < is) { start = is; end = is + Math.round(alloc); }
-            if (end > ie)   { end = ie;   start = ie - Math.round(alloc); }
-            if (start < is) { start = is; }
+            var intervals = TARIFF_ZONES[z];
+            // Зона вмещает не больше своей свободной вместимости
+            var minutes = remaining[z] < capacityFree[z] ? remaining[z] : capacityFree[z];
+            var overflow = remaining[z] - minutes;
+            remaining[z] = 0;
+            capacityFree[z] -= minutes;
 
-            if (end > start) {
-                result.push([toTimeStr(start), toTimeStr(end)]);
+            for (var j = 0; j < intervals.length; j++) {
+                var is = intervals[j][0];
+                var ie = intervals[j][1];
+                var len = ie - is;
+                var alloc = minutes * len / capacityTotal[z];
+
+                var center = (is + ie) / 2;
+                var start = Math.round(center - alloc / 2);
+                var end   = Math.round(center + alloc / 2);
+
+                if (start < is) { start = is; end = is + Math.round(alloc); }
+                if (end > ie)   { end = ie;   start = ie - Math.round(alloc); }
+                if (start < is) { start = is; }
+
+                if (end > start) {
+                    result.push([toTimeStr(start), toTimeStr(end)]);
+                }
+            }
+
+            if (overflow > 0) {
+                unplaced += overflow;
+            }
+        }
+
+        if (unplaced <= 0.5) { break; }
+
+        // Остаток распределяем по зонам пропорционально свободной вместимости;
+        // если её нет — ограничиваем (остаток не размещается)
+        var totalFreeCap = 0;
+        for (z = 0; z < TARIFF_ZONES.length; z++) {
+            totalFreeCap += capacityFree[z];
+        }
+        if (totalFreeCap <= 0) { break; }
+        for (z = 0; z < TARIFF_ZONES.length; z++) {
+            if (capacityFree[z] > 0) {
+                remaining[z] += unplaced * capacityFree[z] / totalFreeCap;
             }
         }
     }
@@ -416,9 +466,15 @@ function makePoolFiltrationSchedule(
                 }
                 times = sunriseSunsetSchedule(sunriseTime, sunsetTime, windows);
             } else if (scheduleMode == 2) {
-                var peakWeight        = dev[tariffPeakWeightTopicName];
-                var semipeakWeight    = dev[tariffSemipeakWeightTopicName];
-                var tariffNightWeight = dev[tariffNightWeightTopicName];
+                var peakWeight        = Number(dev[tariffPeakWeightTopicName]);
+                var semipeakWeight    = Number(dev[tariffSemipeakWeightTopicName]);
+                var tariffNightWeight = Number(dev[tariffNightWeightTopicName]);
+
+                if (!isValidWeight(peakWeight) || !isValidWeight(semipeakWeight) || !isValidWeight(tariffNightWeight)) {
+                    log.warning("[pool-filtration-schedule-{}] invalid tariff weight: peak={}, semipeak={}, night={}", name, peakWeight, semipeakWeight, tariffNightWeight);
+                    return;
+                }
+
                 var tariffTotal       = peakWeight + semipeakWeight + tariffNightWeight;
 
                 if (tariffTotal === 0) {

@@ -46,7 +46,8 @@ function makeIrrigationController(
             dev[deviceName]["watering_allowed"] = allowed;
         }
         
-        // Управляем реле насоса
+        // Управляем реле насоса. Запись только при отличии состояния,
+        // иначе whenChanged по реле насоса зациклится
         if (dev[pumpRelayTopic] !== allowed) {
             dev[pumpRelayTopic] = allowed;
         }
@@ -55,7 +56,8 @@ function makeIrrigationController(
     defineRule({
         whenChanged: [
             tankStatusTopic,
-            deviceName + "/maintenance_mode"
+            deviceName + "/maintenance_mode",
+            pumpRelayTopic
         ],
         then: function() {
             updatePumpState();
@@ -67,7 +69,8 @@ function makeIrrigationController(
             pulseCounterTopic
         ],
         then: function() {
-            var currentPulses = dev[pulseCounterTopic];
+            var currentPulses = Number(dev[pulseCounterTopic]);
+            if (!isFinite(currentPulses)) { return; }
             
             // Инициализация при первом запуске, чтобы не было скачка
             if (lastPulseCount === null) {
@@ -77,9 +80,13 @@ function makeIrrigationController(
             
             var delta = currentPulses - lastPulseCount;
             if (delta > 0) {
-                var pulsesPerLiter = parseFloat(dev[deviceName]["pulses_per_liter"]) || 1;
-                var liters = delta / pulsesPerLiter;
-                dev[deviceName]["total_liters"] = dev[deviceName]["total_liters"] + liters;
+                var pulsesPerLiter = Number(dev[deviceName]["pulses_per_liter"]);
+                if (!isFinite(pulsesPerLiter) || pulsesPerLiter <= 0) {
+                    log.warning("[irrigation-{}] pulses_per_liter is invalid, skipping volume update", name);
+                } else {
+                    var liters = delta / pulsesPerLiter;
+                    dev[deviceName]["total_liters"] = dev[deviceName]["total_liters"] + liters;
+                }
             }
             lastPulseCount = currentPulses;
         }
@@ -96,7 +103,9 @@ function makeIrrigationController(
     
     // Первоначальное вычисление состояния
     updatePumpState();
-    lastPulseCount = dev[pulseCounterTopic];
+    // Если счётчик ещё не отчитался — оставляем null, чтобы при первом
+    // значении сработала ветка инициализации в правиле счётчика
+    lastPulseCount = (dev[pulseCounterTopic] === undefined) ? null : dev[pulseCounterTopic];
 }
 
 makeIrrigationController(
