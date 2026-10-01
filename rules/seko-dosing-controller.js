@@ -549,6 +549,8 @@ function makeSekoDosingController(
 
 // --- Точка входа ---
 
+// TODO: аттракцион не подключен. Ранее сюда передавался "wb-mr6cu_91/K5" — это реле-выход UV-лампы,
+// что вызывало ложное срабатывание режима купания. Вернуть, когда появится дискретный вход аттракциона.
 var dosing = makeSekoDosingController(
     "outdoor",
     "wb-mio-gpio_17:1/K3",
@@ -558,5 +560,5 @@ var dosing = makeSekoDosingController(
     undefined,
     undefined,
     undefined,
-    ["wb-mr6cu_91/K5"]
+    undefined
 );

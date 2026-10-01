@@ -44,16 +44,32 @@ function makeTankLevelController(
         }
     });
 
-    function getSensorState(topic) {
-        var raw = !!dev[topic];
+    function getSensorState(raw) {
+        // Активным считаем только заведомо "включённое" значение
+        var isOn = raw === true || raw === 1 || raw === "true" || raw === "1";
         var invert = !!dev[deviceName]["invert_sensors"];
-        return invert ? !raw : raw;
+        return invert ? !isOn : isOn;
     }
 
     function evaluateAndApply() {
-        var bottom = getSensorState(bottomSensorTopic);
-        var middle = getSensorState(middleSensorTopic);
-        var top = getSensorState(topSensorTopic);
+        var bottomRaw = dev[bottomSensorTopic];
+        var middleRaw = dev[middleSensorTopic];
+        var topRaw = dev[topSensorTopic];
+
+        // Нет данных хотя бы от одного датчика (undefined/null — нет retained-значения
+        // или ошибка чтения, например при старте до прихода retained-значений из MQTT) —
+        // fail-safe: выключаем заполнение и клапан
+        if (bottomRaw == null || middleRaw == null || topRaw == null) {
+            dev[deviceName]["filling"] = false;
+            if (dev[valveRelayTopic] !== false) {
+                dev[valveRelayTopic] = false;
+            }
+            return;
+        }
+
+        var bottom = getSensorState(bottomRaw);
+        var middle = getSensorState(middleRaw);
+        var top = getSensorState(topRaw);
 
         var autoMode = !!dev[deviceName]["auto_mode"];
         var forceFill = !!dev[deviceName]["force_fill"];
@@ -151,8 +167,9 @@ function makeTankLevelController(
         }
     });
 
-    // Первоначальное вычисление состояния при старте правила
-    evaluateAndApply();
+    // Первоначальное вычисление состояния при старте правила — с debounce,
+    // чтобы к моменту расчёта успели прийти retained-значения датчиков
+    scheduleEvaluation();
 }
 
 makeTankLevelController(
