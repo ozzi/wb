@@ -24,7 +24,8 @@ function makePoolFiltrationController(
                     2: { en: "Service Wait", ru: "Ожидание обслуживания" },
                     3: { en: "Fault",        ru: "Ошибка" },
                     4: { en: "Backwash",     ru: "Промывка" },
-                    5: { en: "Rinse",        ru: "Уплотнение" }
+                    5: { en: "Rinse",        ru: "Уплотнение" },
+                    6: { en: "Vacuum",       ru: "Пылесос" }
                 }
             },
             flow_check_delay: {
@@ -68,6 +69,10 @@ function makePoolFiltrationController(
                 title: "RINSE START",
                 type: "pushbutton"
             },
+            intent_vacuum_start: {
+                title: "VACUUM START",
+                type: "pushbutton"
+            },
             intent_emergency_stop: {
                 title: "EMERGENCY STOP",
                 type: "pushbutton"
@@ -88,6 +93,7 @@ function makePoolFiltrationController(
     var intentServiceTopicName       = deviceName + "/intent_service";
     var intentBackwashStartTopicName = deviceName + "/intent_backwash_start";
     var intentRinseStartTopicName    = deviceName + "/intent_rinse_start";
+    var intentVacuumStartTopicName   = deviceName + "/intent_vacuum_start";
     var intentEmergencyStopTopicName = deviceName + "/intent_emergency_stop";
     var intentResetTopicName         = deviceName + "/intent_reset";
 
@@ -120,6 +126,7 @@ function makePoolFiltrationController(
         cancelFlowCheckTimer();
         var delay = dev[flowCheckDelayTopicName];
         if (!delay || delay <= 0) { delay = 30; }
+        if (delay > 300) { delay = 300; }
         flowCheckTimer = setTimeout(function () {
             flowCheckTimer = null;
             var mode = dev[modeTopicName];
@@ -133,6 +140,17 @@ function makePoolFiltrationController(
     }
 
     function applyMode(newMode) {
+        var prevMode = dev[modeTopicName];
+        if (newMode === prevMode) {
+            // For fault mode, ensure pump is off even if mode hasn't changed
+            if (newMode === 3 && dev[pumpSwitchTopicName] !== false) {
+                dev[pumpSwitchTopicName] = false;
+            }
+            return;
+        }
+
+        log("[pool-filtration-ctrl-{}] mode: {} → {}", name, prevMode, newMode);
+
         cancelFlowCheckTimer();
         cancelBackwashTimer();
         cancelRinseTimer();
@@ -163,27 +181,35 @@ function makePoolFiltrationController(
                 dev[pumpSwitchTopicName] = false;
             }
         } else if (newMode === 4) {
-            // backwash — насос выключен в service_wait, переключаем краны, включаем насос
+            // backwash — краны переключаются вручную, включаем насос
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
             var bDuration = dev[backwashDurationTopicName];
             if (!bDuration || bDuration <= 0) { bDuration = 180; }
+            if (bDuration > 3600) { bDuration = 3600; }
             backwashTimer = setTimeout(function () {
                 backwashTimer = null;
                 applyMode(2);
             }, bDuration * 1000);
         } else if (newMode === 5) {
-            // rinse — насос выключен в service_wait, переключаем краны, включаем насос
+            // rinse — краны переключаются вручную, включаем насос
             if (dev[pumpSwitchTopicName] !== true) {
                 dev[pumpSwitchTopicName] = true;
             }
             var rDuration = dev[rinseDurationTopicName];
             if (!rDuration || rDuration <= 0) { rDuration = 45; }
+            if (rDuration > 3600) { rDuration = 3600; }
             rinseTimer = setTimeout(function () {
                 rinseTimer = null;
                 applyMode(2);
             }, rDuration * 1000);
+        } else if (newMode === 6) {
+            // vacuum — ручная уборка, краны переключаются вручную, включаем насос
+            // режим бесконечный, без контроля потока (забираем много воздуха)
+            if (dev[pumpSwitchTopicName] !== true) {
+                dev[pumpSwitchTopicName] = true;
+            }
         }
     }
 
@@ -203,18 +229,18 @@ function makePoolFiltrationController(
         whenChanged: [intentStopTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 1 || mode === 4 || mode === 5) {
+            if (mode === 1 || mode === 4 || mode === 5 || mode === 6) {
                 applyMode(0);
             }
         }
     });
 
-    // intent_service: run/backwash/rinse → service_wait
+    // intent_service: idle/run/backwash/rinse → service_wait
     defineRule("intent-service-" + name, {
         whenChanged: [intentServiceTopicName],
         then: function () {
             var mode = dev[modeTopicName];
-            if (mode === 1 || mode === 4 || mode === 5) {
+            if (mode === 0 || mode === 1 || mode === 4 || mode === 5 || mode === 6) {
                 applyMode(2);
             }
         }
@@ -238,6 +264,17 @@ function makePoolFiltrationController(
             var mode = dev[modeTopicName];
             if (mode === 2) {
                 applyMode(5);
+            }
+        }
+    });
+
+    // intent_vacuum_start: service_wait → vacuum
+    defineRule("intent-vacuum-start-" + name, {
+        whenChanged: [intentVacuumStartTopicName],
+        then: function () {
+            var mode = dev[modeTopicName];
+            if (mode === 2) {
+                applyMode(6);
             }
         }
     });
@@ -274,7 +311,7 @@ function makePoolFiltrationController(
                 }
             } else if (newValue === false) {
                 // Насос выключился, а должен работать
-                if (mode === 1 || mode === 4 || mode === 5) {
+                if (mode === 1 || mode === 4 || mode === 5 || mode === 6) {
                     log.warning("[pool-filtration-ctrl-{}] unexpected pump OFF in mode {} — going to fault", name, mode);
                     applyMode(3);
                 }
@@ -342,6 +379,28 @@ function makePoolFiltrationController(
                 }
             }
         });
+    }
+
+    // Восстановление состояния после перезагрузки правила
+    // Таймеры теряются, поэтому небезопасные режимы сбрасываем
+    var mode = dev[modeTopicName];
+    if (mode === 4 || mode === 5) {
+        log.warning("[pool-filtration-ctrl-{}] recovered after restart: mode {} → service_wait (timers lost)", name, mode);
+        applyMode(2);
+    } else if (mode === 1) {
+        log("[pool-filtration-ctrl-{}] recovered after restart: mode 1, restarting flow check", name);
+        if (dev[pumpSwitchTopicName] !== true) {
+            dev[pumpSwitchTopicName] = true;
+        }
+        if (flowSensorTopicName) {
+            startFlowCheckTimer();
+        }
+    } else if (mode === 6) {
+        // vacuum — бесконечный режим без таймера, просто перезапускаем насос
+        log("[pool-filtration-ctrl-{}] recovered after restart: mode 6 (vacuum), restarting pump", name);
+        if (dev[pumpSwitchTopicName] !== true) {
+            dev[pumpSwitchTopicName] = true;
+        }
     }
 
     if (buttonDoublePressTopicName) {

@@ -34,6 +34,17 @@ function toTimeStr(totalMinutes) {
     return (hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes;
 }
 
+// Тарифные зоны электроэнергии (Самара):
+// пик:     07:00-10:00, 17:00-21:00
+// полупик: 10:00-17:00, 21:00-23:00
+// ночь:    23:00-07:00
+// Интервалы в минутах от полуночи; ночной интервал переходит через полночь.
+var TARIFF_ZONES = [
+    [[toMinutes("07:00"), toMinutes("10:00")], [toMinutes("17:00"), toMinutes("21:00")]],
+    [[toMinutes("10:00"), toMinutes("17:00")], [toMinutes("21:00"), toMinutes("23:00")]],
+    [[toMinutes("23:00"), toMinutes("07:00") + 1440]]
+];
+
 function isValidTimeStr(timeStr) {
     if (typeof timeStr !== 'string') { return false; }
     var re = /^\d{2}:\d{2}$/;
@@ -42,6 +53,11 @@ function isValidTimeStr(timeStr) {
     var hours = parseInt(parts[0], 10);
     var minutes = parseInt(parts[1], 10);
     return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+}
+
+// Валидный вес тарифа: конечное число в диапазоне 0..5
+function isValidWeight(weight) {
+    return typeof weight === "number" && isFinite(weight) && weight >= 0 && weight <= 5;
 }
 
 // Проверяет, попадает ли текущее время в окно вида "HH:MM-HH:MM"
@@ -110,42 +126,87 @@ function sunriseSunsetSchedule(sunriseStr, sunsetStr, windows) {
     return result;
 }
 
-// Рассчитывает окна фильтрации по фиксированным точкам суток:
-// утро — 09:00, день — 15:00, вечер — 21:00, ночь — 03:00
-// windows: массив длительностей в минутах [утро, день, вечер, ночь]
+// Рассчитывает окна фильтрации по тарифным зонам электроэнергии.
+// windows: массив длительностей в минутах [пик, полупик, ночь].
+// Внутри каждой зоны минуты распределяются по её интервалам пропорционально
+// длине интервала; окно центрируется внутри интервала и зажимается в его границы.
+// Если минуты не помещаются в свою зону, остаток итеративно переносится
+// в другие зоны пропорционально их свободной вместимости; если свободной
+// вместимости нет — ограничиваем вместимостью зон.
 function optimizedSchedule(windows) {
-    var result = [null, null, null, null];
+    var result = [];
 
-    if (windows[WINDOW_MORNING] > 0) {
-        var morningTime = toMinutes("09:00");
-        result[WINDOW_MORNING] = [
-            toTimeStr(Math.round(morningTime - windows[WINDOW_MORNING] / 2)),
-            toTimeStr(Math.round(morningTime + windows[WINDOW_MORNING] / 2))
-        ];
+    // Остаток минут по зонам, свободная и полная вместимость каждой зоны
+    var remaining = [];
+    var capacityFree = [];
+    var capacityTotal = [];
+    for (var z = 0; z < TARIFF_ZONES.length; z++) {
+        remaining.push(windows[z] > 0 ? windows[z] : 0);
+        var zoneLen = 0;
+        for (var i = 0; i < TARIFF_ZONES[z].length; i++) {
+            zoneLen += TARIFF_ZONES[z][i][1] - TARIFF_ZONES[z][i][0];
+        }
+        capacityFree.push(zoneLen);
+        capacityTotal.push(zoneLen);
     }
 
-    if (windows[WINDOW_DAY] > 0) {
-        var dayTime = toMinutes("15:00");
-        result[WINDOW_DAY] = [
-            toTimeStr(Math.round(dayTime - windows[WINDOW_DAY] / 2)),
-            toTimeStr(Math.round(dayTime + windows[WINDOW_DAY] / 2))
-        ];
-    }
+    // Итеративная дораспределка остатка
+    for (var pass = 0; pass < TARIFF_ZONES.length; pass++) {
+        var totalRemaining = 0;
+        for (z = 0; z < remaining.length; z++) {
+            totalRemaining += remaining[z];
+        }
+        if (totalRemaining <= 0) { break; }
 
-    if (windows[WINDOW_EVENING] > 0) {
-        var eveningTime = toMinutes("21:00");
-        result[WINDOW_EVENING] = [
-            toTimeStr(Math.round(eveningTime - windows[WINDOW_EVENING] / 2)),
-            toTimeStr(Math.round(eveningTime + windows[WINDOW_EVENING] / 2))
-        ];
-    }
+        var unplaced = 0;
+        for (z = 0; z < TARIFF_ZONES.length; z++) {
+            if (remaining[z] <= 0 || capacityFree[z] <= 0) { continue; }
 
-    if (windows[WINDOW_NIGHT] > 0) {
-        var nightTime = toMinutes("03:00");
-        result[WINDOW_NIGHT] = [
-            toTimeStr(Math.round(nightTime - windows[WINDOW_NIGHT] / 2)),
-            toTimeStr(Math.round(nightTime + windows[WINDOW_NIGHT] / 2))
-        ];
+            var intervals = TARIFF_ZONES[z];
+            // Зона вмещает не больше своей свободной вместимости
+            var minutes = remaining[z] < capacityFree[z] ? remaining[z] : capacityFree[z];
+            var overflow = remaining[z] - minutes;
+            remaining[z] = 0;
+            capacityFree[z] -= minutes;
+
+            for (var j = 0; j < intervals.length; j++) {
+                var is = intervals[j][0];
+                var ie = intervals[j][1];
+                var len = ie - is;
+                var alloc = minutes * len / capacityTotal[z];
+
+                var center = (is + ie) / 2;
+                var start = Math.round(center - alloc / 2);
+                var end   = Math.round(center + alloc / 2);
+
+                if (start < is) { start = is; end = is + Math.round(alloc); }
+                if (end > ie)   { end = ie;   start = ie - Math.round(alloc); }
+                if (start < is) { start = is; }
+
+                if (end > start) {
+                    result.push([toTimeStr(start), toTimeStr(end)]);
+                }
+            }
+
+            if (overflow > 0) {
+                unplaced += overflow;
+            }
+        }
+
+        if (unplaced <= 0.5) { break; }
+
+        // Остаток распределяем по зонам пропорционально свободной вместимости;
+        // если её нет — ограничиваем (остаток не размещается)
+        var totalFreeCap = 0;
+        for (z = 0; z < TARIFF_ZONES.length; z++) {
+            totalFreeCap += capacityFree[z];
+        }
+        if (totalFreeCap <= 0) { break; }
+        for (z = 0; z < TARIFF_ZONES.length; z++) {
+            if (capacityFree[z] > 0) {
+                remaining[z] += unplaced * capacityFree[z] / totalFreeCap;
+            }
+        }
     }
 
     return result;
@@ -260,6 +321,30 @@ function makePoolFiltrationSchedule(
                 min: 0,
                 readonly: false
             },
+            tariff_peak_weight: {
+                title: "tariff peak weight",
+                type: "range",
+                value: 1,
+                max: 5,
+                min: 0,
+                readonly: false
+            },
+            tariff_semipeak_weight: {
+                title: "tariff semipeak weight",
+                type: "range",
+                value: 1,
+                max: 5,
+                min: 0,
+                readonly: false
+            },
+            tariff_night_weight: {
+                title: "tariff night weight",
+                type: "range",
+                value: 1,
+                max: 5,
+                min: 0,
+                readonly: false
+            },
             sunrise_time: {
                 type: "text",
                 readonly: false,
@@ -302,6 +387,9 @@ function makePoolFiltrationSchedule(
     var dayWeightTopicName         = deviceName + "/day_weight";
     var eveningWeightTopicName     = deviceName + "/evening_weight";
     var nightWeightTopicName       = deviceName + "/night_weight";
+    var tariffPeakWeightTopicName     = deviceName + "/tariff_peak_weight";
+    var tariffSemipeakWeightTopicName = deviceName + "/tariff_semipeak_weight";
+    var tariffNightWeightTopicName    = deviceName + "/tariff_night_weight";
     var sunriseTimeTopicName       = deviceName + "/sunrise_time";
     var sunsetTimeTopicName        = deviceName + "/sunset_time";
     var scheduleModeTopicName      = deviceName + "/schedule_mode";
@@ -318,6 +406,9 @@ function makePoolFiltrationSchedule(
             nightWeightTopicName,
             morningWeightTopicName,
             eveningWeightTopicName,
+            tariffPeakWeightTopicName,
+            tariffSemipeakWeightTopicName,
+            tariffNightWeightTopicName,
             sunriseTimeTopicName,
             sunsetTimeTopicName,
             scheduleModeTopicName
@@ -340,29 +431,29 @@ function makePoolFiltrationSchedule(
             var workHoursPerDay = poolVolume / 1000 * dailyCycles / pumpFlow;
             if (workHoursPerDay > 24) { workHoursPerDay = 24; }
 
-            var morningWeight = dev[morningWeightTopicName];
-            var dayWeight     = dev[dayWeightTopicName];
-            var eveningWeight = dev[eveningWeightTopicName];
-            var nightWeight   = dev[nightWeightTopicName];
-            var totalWeight   = morningWeight + dayWeight + eveningWeight + nightWeight;
-
-            if (totalWeight === 0) {
-                dev[scheduleTopicName] = "";
-                dev[workHoursPerDayTopicName] = 0;
-                return;
-            }
-
-            // Длительности окон в минутах
-            var windows = [null, null, null, null];
-            windows[WINDOW_MORNING] = workHoursPerDay * morningWeight / totalWeight * 60;
-            windows[WINDOW_DAY]     = workHoursPerDay * dayWeight     / totalWeight * 60;
-            windows[WINDOW_EVENING] = workHoursPerDay * eveningWeight / totalWeight * 60;
-            windows[WINDOW_NIGHT]   = workHoursPerDay * nightWeight   / totalWeight * 60;
-
             var scheduleMode = dev[scheduleModeTopicName];
             var times = [];
 
             if (scheduleMode == 1) {
+                var morningWeight = dev[morningWeightTopicName];
+                var dayWeight     = dev[dayWeightTopicName];
+                var eveningWeight = dev[eveningWeightTopicName];
+                var nightWeight   = dev[nightWeightTopicName];
+                var totalWeight   = morningWeight + dayWeight + eveningWeight + nightWeight;
+
+                if (totalWeight === 0) {
+                    dev[scheduleTopicName] = "";
+                    dev[workHoursPerDayTopicName] = 0;
+                    return;
+                }
+
+                // Длительности окон в минутах
+                var windows = [null, null, null, null];
+                windows[WINDOW_MORNING] = workHoursPerDay * morningWeight / totalWeight * 60;
+                windows[WINDOW_DAY]     = workHoursPerDay * dayWeight     / totalWeight * 60;
+                windows[WINDOW_EVENING] = workHoursPerDay * eveningWeight / totalWeight * 60;
+                windows[WINDOW_NIGHT]   = workHoursPerDay * nightWeight   / totalWeight * 60;
+
                 var sunriseTime = dev[sunriseTimeTopicName];
                 var sunsetTime  = dev[sunsetTimeTopicName];
                 if (!isValidTimeStr(sunriseTime)) {
@@ -375,7 +466,30 @@ function makePoolFiltrationSchedule(
                 }
                 times = sunriseSunsetSchedule(sunriseTime, sunsetTime, windows);
             } else if (scheduleMode == 2) {
-                times = optimizedSchedule(windows);
+                var peakWeight        = Number(dev[tariffPeakWeightTopicName]);
+                var semipeakWeight    = Number(dev[tariffSemipeakWeightTopicName]);
+                var tariffNightWeight = Number(dev[tariffNightWeightTopicName]);
+
+                if (!isValidWeight(peakWeight) || !isValidWeight(semipeakWeight) || !isValidWeight(tariffNightWeight)) {
+                    log.warning("[pool-filtration-schedule-{}] invalid tariff weight: peak={}, semipeak={}, night={}", name, peakWeight, semipeakWeight, tariffNightWeight);
+                    return;
+                }
+
+                var tariffTotal       = peakWeight + semipeakWeight + tariffNightWeight;
+
+                if (tariffTotal === 0) {
+                    dev[scheduleTopicName] = "";
+                    dev[workHoursPerDayTopicName] = 0;
+                    return;
+                }
+
+                // Длительности окон по тарифам в минутах [пик, полупик, ночь]
+                var tariffWindows = [
+                    workHoursPerDay * peakWeight        / tariffTotal * 60,
+                    workHoursPerDay * semipeakWeight    / tariffTotal * 60,
+                    workHoursPerDay * tariffNightWeight / tariffTotal * 60
+                ];
+                times = optimizedSchedule(tariffWindows);
             }
 
             var mergedTimes = mergeOverlappingWindows(times);
@@ -394,12 +508,12 @@ function makePoolFiltrationSchedule(
             if (scheduleMode == 0) { return; }
 
             var mode = dev[modeTopicName];
-            if (mode == 2 || mode == 3 || mode == 4 || mode == 5) { return; }
+            if (mode == 2 || mode == 3 || mode == 4 || mode == 5 || mode == 6) { return; }
 
             var timeWindowsStr = dev[scheduleTopicName];
 
             if (!timeWindowsStr || timeWindowsStr === "") {
-                if (mode == 1) { dev[intentStopTopicName] = 1; }
+                if (mode == 1) { dev[intentStopTopicName] = true; }
                 return;
             }
 
@@ -414,9 +528,9 @@ function makePoolFiltrationSchedule(
             }
 
             if (isInWindow) {
-                if (mode == 0) { dev[intentStartTopicName] = 1; }
+                if (mode == 0) { dev[intentStartTopicName] = true; }
             } else {
-                if (mode == 1) { dev[intentStopTopicName] = 1; }
+                if (mode == 1) { dev[intentStopTopicName] = true; }
             }
         }
     });

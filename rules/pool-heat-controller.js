@@ -12,6 +12,7 @@ function makePoolHeatController(
 ) {
     var deviceName = "pool-heat-ctrl-" + name;
     var defaultHysteresis = 0.5;
+    var HEATER_POWER_W = 6000; // TODO: заменить на реальный топик мощности электрокотла, когда он будет подключён
 
     var STATUS_OFF                      = 0;
     var STATUS_STANDBY                  = 1;
@@ -171,7 +172,7 @@ function makePoolHeatController(
             dev[flowRateTopicName] = 0;
             return;
         }
-        var power = dev[heaterPowerTopicName];
+        var power = HEATER_POWER_W;
         var delta = dev[deltaTopicName];
         if (typeof power !== "number" || isNaN(power) || power <= 0 || delta <= 0) {
             dev[flowRateTopicName] = 0;
@@ -215,7 +216,7 @@ function makePoolHeatController(
             return;
         }
 
-        var power = dev[heaterPowerTopicName];
+        var power = HEATER_POWER_W;
         var deltaValid = dev[deltaValidTopicName];
         var delta = dev[deltaTopicName];
 
@@ -302,16 +303,13 @@ function makePoolHeatController(
             outletTemperatureTopicName,
             outletTemperatureOkTopicName,
             poolFiltrationModeTopicName,
-            hysteresisTopicName,
-            heaterPowerTopicName
+            hysteresisTopicName
         ],
         then: function () {
             applyHeatState();
         }
     });
 
-    // TODO: если heat_source = 1 (электрокотёл), heaterPowerTopicName указывает на мощность ASIC,
-    // что не отражает реальную мощность нагрева. Учёт энергии в этом режиме будет некорректным.
     setInterval(function () {
         tickEnergy();
     }, 60 * 1000);
@@ -381,5 +379,5 @@ makePoolHeatController(
     "wb-m1w2_118/External Sensor 1 OK",
     "pool-filtration-ctrl-outdoor/mode",
     5,
-    "ANTMINER S21e/power"
+    undefined
 );
