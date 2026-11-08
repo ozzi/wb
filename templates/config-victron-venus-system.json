@@ -1,0 +1,87 @@
+{
+    "device_type": "victron-venus-system",
+    "group": "g-custom",
+    "device": {
+        "name": "Victron Venus (system)",
+        "id": "victron-venus",
+        "max_read_registers": 7,
+        "response_timeout_ms": 500,
+        "channels": [
+            {
+                "name": "Battery voltage",
+                "id": "battery-voltage",
+                "reg_type": "holding",
+                "address": 840,
+                "format": "u16",
+                "scale": 0.1,
+                "units": "V",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Battery current",
+                "id": "battery-current",
+                "reg_type": "holding",
+                "address": 841,
+                "format": "s16",
+                "scale": 0.1,
+                "units": "A",
+                "error_value": "0x7FFF",
+                "readonly": true
+            },
+            {
+                "name": "Battery power",
+                "id": "battery-power",
+                "reg_type": "holding",
+                "address": 842,
+                "format": "s16",
+                "units": "W",
+                "error_value": "0x7FFF",
+                "readonly": true
+            },
+            {
+                "name": "Battery SOC",
+                "id": "battery-soc",
+                "reg_type": "holding",
+                "address": 843,
+                "format": "u16",
+                "units": "%",
+                "max": 100,
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Battery state",
+                "id": "battery-state",
+                "reg_type": "holding",
+                "address": 844,
+                "format": "u16",
+                "enum": [0, 1, 2],
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Battery consumed Ah",
+                "id": "battery-consumed-ah",
+                "reg_type": "holding",
+                "address": 845,
+                "format": "s16",
+                "scale": -0.1,
+                "units": "Ah",
+                "error_value": "0x7FFF",
+                "readonly": true
+            },
+            {
+                "name": "Battery time to go",
+                "id": "battery-time-to-go",
+                "reg_type": "holding",
+                "address": 846,
+                "format": "u16",
+                "scale": 0.01,
+                "units": "s",
+                "error_value": "0xFFFF",
+                "readonly": true
+            }
+        ]
+    }
+}
