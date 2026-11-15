@@ -1,4 +1,4 @@
-// Version: 1
+// Version: 2
 // Регулирование насоса ТП по ΔT (подача − обратка) на штатном ПИД-движке Wiren Board.
 //
 // Движок: require('pid-engine.mod').PidEngine (пакет wb-scenarios) —
@@ -10,11 +10,22 @@
 // ПИД 0 % → power 1000 (максимум оборотов), ПИД 100 % → power 0 (минимум).
 // power пишется в VD pump-pwm-controller-<контур>, который сам публикует
 // уровень и Switch в WB-MAO4 (см. pump-pwm-controller.js).
+//
+// Паузы (регулятор держит текущий power и не копит интеграл):
+//   • ручная — канал hold;
+//   • ГВС — канал gvs_hold включает учёт сухого контакта «запрос тепла бойлера»
+//     (по умолчанию выключен: на линии сейчас постоянная 1, контакт не проверен);
+//   • переходный процесс — резкое изменение подачи на 1 K за цикл (котёл
+//     переключился на БКН или вернулся). Держим паузу 4 минуты, чтобы контур
+//     вернулся, и только потом считаем снова.
 
 var PidEngine = require('pid-engine.mod').PidEngine;
 
-var PERIOD_SEC = 60;          // период расчёта
-var MAX_STEP = 100;           // ограничение изменения power за цикл (10 % шкалы)
+var PERIOD_SEC = 60;            // период расчёта
+var MAX_STEP = 100;             // ограничение изменения power за цикл (10 % шкалы)
+var TRANSIENT_K = 1.0;          // скачок подачи за цикл, считаем переходным процессом
+var TRANSIENT_PAUSE_SEC = 240;  // сколько ждать после скачка
+var GVS_TOPIC = "wb-mr6cv3_52/Input 2";
 
 function clamp(v, lo, hi) {
   if (v < lo) return lo;
@@ -22,7 +33,7 @@ function clamp(v, lo, hi) {
   return v;
 }
 
-function makeDeltaPid(name, title, deltaTopic, powerDevice) {
+function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
   var deviceName = "pump-delta-pid-" + name;
   var cellEnabled = deviceName + "/enabled";
   var cellSetpoint = deviceName + "/setpoint";
@@ -31,9 +42,12 @@ function makeDeltaPid(name, title, deltaTopic, powerDevice) {
   var cellKd = deviceName + "/kd";
   var cellDeadband = deviceName + "/deadband";
   var cellBias = deviceName + "/bias";
+  var cellHold = deviceName + "/hold";
+  var cellGvsHold = deviceName + "/gvs_hold";
   var cellDelta = deviceName + "/delta";
   var cellOutput = deviceName + "/output";
   var cellPower = deviceName + "/power";
+  var cellStatus = deviceName + "/status";
 
   defineVirtualDevice(deviceName, {
     title: title,
@@ -45,9 +59,12 @@ function makeDeltaPid(name, title, deltaTopic, powerDevice) {
       kd: { title: "Kd", type: "range", value: 0, min: 0, max: 200, readonly: false, order: 5 },
       deadband: { title: "Мёртвая зона, K", type: "range", value: 0.3, min: 0, max: 5, readonly: false, order: 6 },
       bias: { title: "Рабочая точка, %", type: "range", value: 50, min: 0, max: 100, readonly: false, order: 7 },
+      hold: { title: "Пауза (ручная)", type: "switch", value: false, readonly: false, order: 8 },
+      gvs_hold: { title: "Пауза по ГВС", type: "switch", value: false, readonly: false, order: 9 },
       delta: { title: "Текущая ΔT, K", type: "value", value: 0, readonly: true, order: 10 },
       output: { title: "Выход ПИД, %", type: "value", value: 0, readonly: true, order: 11 },
-      power: { title: "Мощность насоса", type: "value", value: 0, readonly: true, order: 12 }
+      power: { title: "Мощность насоса", type: "value", value: 0, readonly: true, order: 12 },
+      status: { title: "Состояние", type: "text", value: "выключен", readonly: true, order: 13 }
     }
   });
 
@@ -58,6 +75,12 @@ function makeDeltaPid(name, title, deltaTopic, powerDevice) {
   var pid = new PidEngine(dev[cellKp], dev[cellKi], dev[cellKd], dev[cellDeadband]);
   var lastPower = Number(dev[powerStateTopic]) || 0;
   var wasEnabled = false;
+  var prevInlet = null;
+  var pauseUntil = 0;
+
+  function setStatus(text) {
+    if (dev[cellStatus] !== text) dev[cellStatus] = text;
+  }
 
   function setPower(value) {
     var v = clamp(Math.round(value), 0, 1000);
@@ -72,7 +95,10 @@ function makeDeltaPid(name, title, deltaTopic, powerDevice) {
       // выключенный регулятор насос не трогает: power остаётся под ручным управлением
       pid.reset();
       wasEnabled = false;
+      prevInlet = null;
+      pauseUntil = 0;
       dev[cellOutput] = 0;
+      setStatus("выключен");
       return;
     }
 
@@ -81,15 +107,41 @@ function makeDeltaPid(name, title, deltaTopic, powerDevice) {
       // регулятор не прыгает в край шкалы, а держит середину
       pid.reset();
       pid.integral = dev[cellBias];
+      pid.lastMeasurement = null;
       wasEnabled = true;
+      prevInlet = null;
+      pauseUntil = 0;
     }
 
-    var measurement = dev[deltaTopic];
-    if (typeof measurement !== "number" || isNaN(measurement)) {
+    var now = Date.now();
+    var inlet = Number(dev[inletTopic]);
+    var measurement = Number(dev[deltaTopic]);
+
+    // скачок подачи = переходный процесс (котёл перешёл на БКН или вернулся)
+    if (prevInlet !== null && !isNaN(inlet) && Math.abs(inlet - prevInlet) >= TRANSIENT_K) {
+      pauseUntil = now + TRANSIENT_PAUSE_SEC * 1000;
+    }
+    if (!isNaN(inlet)) prevInlet = inlet;
+
+    if (dev[cellHold]) {
+      setStatus("пауза: вручную");
+      return;
+    }
+    if (dev[cellGvsHold] && Number(dev[GVS_TOPIC]) === 1) {
+      setStatus("пауза: ГВС");
+      return;
+    }
+    if (now < pauseUntil) {
+      setStatus("пауза: переходный процесс");
+      return;
+    }
+
+    if (isNaN(measurement) || typeof dev[deltaTopic] !== "number") {
       publish(errTopic, "r", 2, true);
       pid.reset();
       dev[cellOutput] = 0;
       setPower(0);
+      setStatus("нет ΔT — насос на минимум");
       return;
     }
     publish(errTopic, "", 2, true);
@@ -109,6 +161,7 @@ function makeDeltaPid(name, title, deltaTopic, powerDevice) {
     dev[cellDelta] = measurement;
     dev[cellOutput] = Math.round(out * 10) / 10;
     setPower(target);
+    setStatus("работа");
   }
 
   setInterval(cycle, PERIOD_SEC * 1000);
@@ -116,6 +169,8 @@ function makeDeltaPid(name, title, deltaTopic, powerDevice) {
 }
 
 makeDeltaPid("underfloor-1", "ПИД насоса ТП 1Э (по ΔT)",
-  "delta-temp-underfloor-1/delta", "pump-pwm-controller-underfloor-heating-1");
+  "delta-temp-underfloor-1/delta", "wb-ms_203/External Sensor 1",
+  "pump-pwm-controller-underfloor-heating-1");
 makeDeltaPid("underfloor-2", "ПИД насоса ТП 2Э (по ΔT)",
-  "delta-temp-underfloor-2/delta", "pump-pwm-controller-underfloor-heating-2");
+  "delta-temp-underfloor-2/delta", "wb-ms_25/External Sensor 1",
+  "pump-pwm-controller-underfloor-heating-2");
