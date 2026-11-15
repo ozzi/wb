@@ -44,6 +44,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
   var cellBias = deviceName + "/bias";
   var cellHold = deviceName + "/hold";
   var cellGvsHold = deviceName + "/gvs_hold";
+  var cellGvsLevel = deviceName + "/gvs_level";
   var cellDelta = deviceName + "/delta";
   var cellOutput = deviceName + "/output";
   var cellPower = deviceName + "/power";
@@ -61,6 +62,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       bias: { title: "Рабочая точка, %", type: "range", value: 50, min: 0, max: 100, readonly: false, order: 7 },
       hold: { title: "Пауза (ручная)", type: "switch", value: false, readonly: false, order: 8 },
       gvs_hold: { title: "Пауза по ГВС", type: "switch", value: false, readonly: false, order: 9 },
+      gvs_level: { title: "Активный уровень ГВС (0/1)", type: "range", value: 1, min: 0, max: 1, readonly: false, order: 9.5 },
       delta: { title: "Текущая ΔT, K", type: "value", value: 0, readonly: true, order: 10 },
       output: { title: "Выход ПИД, %", type: "value", value: 0, readonly: true, order: 11 },
       power: { title: "Мощность насоса", type: "value", value: 0, readonly: true, order: 12 },
@@ -127,7 +129,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       setStatus("пауза: вручную");
       return;
     }
-    if (dev[cellGvsHold] && Number(dev[GVS_TOPIC]) === 1) {
+    if (dev[cellGvsHold] && Number(dev[GVS_TOPIC]) === Number(dev[cellGvsLevel])) {
       setStatus("пауза: ГВС");
       return;
     }
