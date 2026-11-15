@@ -16,8 +16,9 @@ function makePumpPWMController(name, minSpeedValue, maxSpeedValue, stopValue, ou
   var deviceName = "pump-pwm-controller-" + name;
   var stateTopicName = deviceName + "/state";
   var powerTopicName = deviceName + "/power";
-  var levelCmdTopic = "/devices/" + outputChannel + "/on";
-  var switchCmdTopic = "/devices/" + outputChannel + " Switch/on";
+  // outputChannel приходит в виде "<device>/Channel N"; топик команды строится от /controls
+  var levelTopic = "/devices/" + outputChannel.replace("/", "/controls/") + "/on";
+  var switchTopic = "/devices/" + outputChannel.replace("/", "/controls/") + " Switch/on";
 
   defineVirtualDevice(deviceName, {
     title: "Pump PWM Controller - " + name,
@@ -46,11 +47,11 @@ function makePumpPWMController(name, minSpeedValue, maxSpeedValue, stopValue, ou
   function apply() {
     var stateValue = dev[stateTopicName];
     if (stateValue == 3) {
-      publish(switchCmdTopic, "0", 0, false);
+      publish(switchTopic, "0", 0, false);
       return;
     }
 
-    publish(switchCmdTopic, "1", 0, false);
+    publish(switchTopic, "1", 0, false);
 
     var level;
     if (stateValue == 2) {
@@ -58,7 +59,7 @@ function makePumpPWMController(name, minSpeedValue, maxSpeedValue, stopValue, ou
     } else {
       level = (minSpeedValue + (maxSpeedValue - minSpeedValue) / 1000 * dev[powerTopicName]) * 10;
     }
-    publish(levelCmdTopic, String(level), 0, false);
+    publish(levelTopic, String(level), 0, false);
   }
 
   defineRule("pump-pwm-automation-" + name, {
