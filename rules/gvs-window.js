@@ -1,22 +1,23 @@
-// Version: 2
-// Окна работы котла на БКН: фиксируем провал подачи и следим за выравниванием
+// Version: 3
+// Окна работы котла на БКН: фиксируем провал подачи и ждём выравнивания
 // подача/обратка. Нужно для калибровки датчиков относительно друг друга.
 //
-// v2 (после первого пойманного окна 18:31–18:45):
-//  • plateau_delta фиксируется ОДИН раз на 8-й минуте и больше не перезаписывается —
-//    в v1 он затирался каждую минуту и к закрытию окна хранил ΔT уже на выходе (4,63 вместо 1,06);
-//  • добавлен delta_drift — скорость изменения ΔT в конце окна, K/мин;
-//  • добавлен settled — «ΔT встала» (|drift| ≤ 0,05 K/мин). Только при нём плато
-//    считается установившимся; но и тогда это смещение + остаточный перепад от тепла в контуре.
+// История правок:
+//  v1 — plateau_delta перезаписывался каждую минуту, к закрытию окна хранил ΔT на выходе (4,63).
+//  v2 — плато фиксировалось один раз на 8-й минуте; по ночным данным оказалось, что 8-я минута
+//       тоже не равна установлению: в окне 01:56–04:44 зафиксировалось 4,88, а ΔT дошла до 0,98.
+//  v3 — плато = ПОСЛЕДНЕЕ значение, при котором ΔT установилась (|дрейф| ≤ 0,05 K/мин),
+//       и оно обновляется, пока окно открыто; elapsed сбрасывается при закрытии;
+//       окна длиннее 60 минут помечаются как long (ночной простой, а не цикл ГК).
 //
-// История пишется автоматически: wb-mqtt-db собирает все каналы ("+/+") —
-// значения лягут в data.db сами, отдельный файл не нужен.
+// История пишется автоматически: wb-mqtt-db собирает все каналы ("+/+") — значения лягут в data.db.
 
-var CHECK_SEC = 60;        // шаг наблюдения
-var HISTORY = 6;           // глубина истории подачи, минут
-var DROP_K = 1.0;          // падение подачи, считаем началом окна БКН
-var PLATEAU_MIN = 8;       // с этой минуты фиксируем плато
-var SETTLED_K_MIN = 0.05;  // порог «ΔT встала», K/мин
+var CHECK_SEC = 60;          // шаг наблюдения
+var HISTORY = 6;             // глубина истории подачи, минут
+var DROP_K = 1.0;            // падение подачи, считаем началом окна БКН
+var PLATEAU_MIN = 8;         // раньше этой минуты плато не ищем
+var SETTLED_K_MIN = 0.05;    // порог «ΔT встала», K/мин
+var LONG_WINDOW_MIN = 60;    // дольше — это простой, а не цикл ГК
 
 var DEV = "gvs-window";
 var IN_T = "wb-ms_25/External Sensor 1";
@@ -31,11 +32,12 @@ defineVirtualDevice(DEV, {
     t_out: { title: "Обратка, °C", type: "temperature", value: 0, readonly: true, order: 4 },
     delta: { title: "ΔT, K", type: "value", value: 0, readonly: true, order: 5 },
     min_delta: { title: "Мин. ΔT в окне, K", type: "value", value: 0, readonly: true, order: 6 },
-    plateau_delta: { title: "ΔT на плато (8-я мин), K", type: "value", value: 0, readonly: true, order: 7 },
-    plateau_ready: { title: "Плато зафиксировано", type: "switch", value: false, readonly: true, order: 8 },
+    plateau_delta: { title: "ΔT на плато (установившаяся)", type: "value", value: 0, readonly: true, order: 7 },
+    plateau_ready: { title: "Плато найдено", type: "switch", value: false, readonly: true, order: 8 },
     delta_drift: { title: "Дрейф ΔT, K/мин", type: "value", value: 0, readonly: true, order: 9 },
     settled: { title: "ΔT установилась", type: "switch", value: false, readonly: true, order: 10 },
-    windows: { title: "Окон за сутки", type: "value", value: 0, readonly: true, order: 11 }
+    long_window: { title: "Длинное окно (>60 мин)", type: "switch", value: false, readonly: true, order: 11 },
+    windows: { title: "Окон за сутки", type: "value", value: 0, readonly: true, order: 12 }
   }
 });
 
@@ -44,7 +46,7 @@ var deltaHistory = [];     // ΔT за последние минуты (для �
 var active = false;
 var elapsed = 0;
 var minDelta = 0;
-var plateauFixed = false;
+var plateauFound = false;
 var windows = 0;
 var dayKey = "";
 
@@ -71,13 +73,14 @@ function tick() {
     active = true;
     elapsed = 0;
     minDelta = delta;
-    plateauFixed = false;
+    plateauFound = false;
     deltaHistory = [];
     windows++;
     log("БКН: подача упала на " + drift.toFixed(2) + " K за " + HISTORY + " мин, окно открыто");
     dev[DEV + "/plateau_ready"] = false;
     dev[DEV + "/plateau_delta"] = 0;
     dev[DEV + "/settled"] = false;
+    dev[DEV + "/long_window"] = false;
   }
 
   if (active) {
@@ -89,25 +92,31 @@ function tick() {
     var deltaDrift = deltaHistory.length === 4
       ? (deltaHistory[3] - deltaHistory[0]) / 3
       : 0;
+    var isSettled = elapsed >= PLATEAU_MIN && Math.abs(deltaDrift) <= SETTLED_K_MIN;
 
-    // плато фиксируем один раз — иначе к закрытию окна в нём окажется значение на выходе
-    if (elapsed >= PLATEAU_MIN && !plateauFixed) {
-      plateauFixed = true;
+    // плато — последнее УСТАНОВИВШЕЕСЯ значение, а не значение по таймеру
+    if (isSettled) {
+      if (!plateauFound) {
+        plateauFound = true;
+        log("БКН: ΔT установилась на " + elapsed + "-й мин, " + delta.toFixed(2) +
+            " K, дрейф " + deltaDrift.toFixed(3) + " K/мин");
+      }
       dev[DEV + "/plateau_delta"] = delta;
       dev[DEV + "/plateau_ready"] = true;
-      log("БКН: плато зафиксировано на " + elapsed + "-й мин, ΔT " + delta.toFixed(2) +
-          " K, дрейф " + deltaDrift.toFixed(3) + " K/мин");
     }
 
     dev[DEV + "/delta_drift"] = Math.round(deltaDrift * 1000) / 1000;
-    dev[DEV + "/settled"] = !!(plateauFixed && Math.abs(deltaDrift) <= SETTLED_K_MIN);
+    dev[DEV + "/settled"] = !!isSettled;
+    dev[DEV + "/long_window"] = elapsed > LONG_WINDOW_MIN;
 
     if (drift >= DROP_K) {
       active = false;
       log("БКН: подача вернулась на " + drift.toFixed(2) + " K, окно закрыто через " +
-          elapsed + " мин, мин ΔT " + minDelta.toFixed(2) +
-          (plateauFixed ? ", плато ΔT " + dev[DEV + "/plateau_delta"] +
-            ", дрейф " + deltaDrift.toFixed(3) + " K/мин" : ", плато не достигнуто"));
+          elapsed + " мин" + (elapsed > LONG_WINDOW_MIN ? " (длинное, простой)" : "") +
+          ", мин ΔT " + minDelta.toFixed(2) +
+          (plateauFound ? ", плато ΔT " + dev[DEV + "/plateau_delta"] : ", плато не найдено"));
+      elapsed = 0;
+      dev[DEV + "/settled"] = false;
     }
   }
 
