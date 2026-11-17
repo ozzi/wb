@@ -117,7 +117,9 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       // в момент включения ставим рабочую точку в интегратор: при нулевой ошибке
       // регулятор не прыгает в край шкалы, а держит середину
       pid.reset();
-      pid.integral = dev[cellBias];
+      // bias задаётся в конвенции скорости насоса (как и канал output), а движок
+      // считает в конвенции дросселирования — переводим: 100 − speed.
+      pid.integral = 100 - Number(dev[cellBias]);
       pid.lastMeasurement = null;
       wasEnabled = true;
       inletHistory = [];
@@ -148,9 +150,14 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       setStatus("пауза: вручную");
       return;
     }
-    if (dev[cellGvsHold] && Number(dev[GVS_TOPIC]) === Number(dev[cellGvsLevel])) {
-      setStatus("пауза: ГВС");
-      return;
+    // ГВС: при включённом учёте недоступный топик (NaN) трактуем как «сигнал есть»
+    // — без него нельзя доказать, что бойлер не греется, а гнать контур вслепую хуже паузы.
+    if (dev[cellGvsHold]) {
+      var gvsRaw = Number(dev[GVS_TOPIC]);
+      if (isNaN(gvsRaw) || gvsRaw === Number(dev[cellGvsLevel])) {
+        setStatus(isNaN(gvsRaw) ? "пауза: ГВС (нет сигнала)" : "пауза: ГВС");
+        return;
+      }
     }
     if (now < pauseUntil) {
       setStatus("пауза: переходный процесс");
