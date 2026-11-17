@@ -6,7 +6,7 @@ name: AI Review
 # остаются только динамические решения и чтение контекста.
 #
 # Политика запуска (как в остальных репозиториях): lite — автоматически на
-# каждый PR, strong — только вручную: workflow_dispatch с inputs.tier=strong
+# каждый PR в main, strong — только вручную: workflow_dispatch с inputs.tier=strong
 # или комментарий «/ai-review hard» к PR. Модель — по тиру, LiteLLM-алиасы
 # agent/ocr-lite (дефолт) и agent/ocr-strong; апстрим-модели и дневной
 # бюджет-кап живут на стороне LiteLLM-прокси.
@@ -62,7 +62,7 @@ concurrency:
           )
         )
       )
-      && format('ocr-{0}', github.event.inputs.pr_number || github.event.issue.number)
+      && format('ocr-{0}', github.event.pull_request.number || github.event.inputs.pr_number || github.event.issue.number)
       || format('noop-{0}', github.run_id)
     }}
   cancel-in-progress: true
@@ -159,6 +159,10 @@ jobs:
             const prNumber = context.eventName === 'workflow_dispatch'
               ? Number(context.payload.inputs?.pr_number)
               : context.issue.number;
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`pr_number must be a positive integer, got '${context.payload.inputs?.pr_number ?? ''}'`);
+              return;
+            }
             const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -197,7 +201,9 @@ jobs:
                 });
                 canReview = ['admin', 'maintain', 'write'].includes(permission.permission);
               } catch (error) {
-                core.warning(`Permission lookup failed, re-review skipped: ${error.message}`);
+                // fail-closed: без ответа API право write не доказано
+                canReview = false;
+                core.warning(`Permission lookup failed, review skipped: ${error.message}`);
               }
             }
             // Контекст для ревью: заголовок PR и первые 1000 символов описания.
@@ -216,7 +222,7 @@ jobs:
           INPUT_TIER: ${{ inputs.tier }}
         run: |
           TIER="${INPUT_TIER:-lite}"
-          if [ "$TIER" != "strong" ] && grep -qi 'hard' <<< "$COMMENT_BODY"; then
+          if [ "$TIER" != "strong" ] && grep -qiE '(^|[[:space:]])hard([[:space:]]|$)' <<< "$COMMENT_BODY"; then
             TIER="strong"
           fi
           echo "tier=$TIER" >> "$GITHUB_OUTPUT"
