@@ -1,4 +1,4 @@
-// Version: 2
+// Version: 3
 // Регулирование насоса ТП по ΔT (подача − обратка) на штатном ПИД-движке Wiren Board.
 //
 // Движок: require('pid-engine.mod').PidEngine (пакет wb-scenarios) —
@@ -6,8 +6,16 @@
 // как снижение усиления до 10 %.
 //
 // Задача: держать заданную ΔT контура. Связь обратная — чем больше расход,
-// тем меньше ΔT, поэтому выход ПИД (0..100 %) инвертируется в power насоса:
-// ПИД 0 % → power 1000 (максимум оборотов), ПИД 100 % → power 0 (минимум).
+// тем меньше ΔT, поэтому штатный движок считает ошибку как «уставка − факт»
+// и его выход 0..100 % означает степень ДРОССЕЛИРОВАНИЯ: 0 % = максимум
+// оборотов, 100 % = минимум.
+//
+// v3: наружу выведена мощность насоса, а не дросселирование. Канал `output`
+// теперь читается как «скорость насоса, %»: output 59 % = power 590 (середина
+// шкалы), и power = output × 10 без инверсии. Внутри движка интеграл остаётся
+// в прежней конвенции (дросселирование), наружу он не выходит; сигнал
+// управления тождественно прежний, коэффициенты и bias 50 переобучать не надо.
+//
 // power пишется в VD pump-pwm-controller-<контур>, который сам публикует
 // уровень и Switch в WB-MAO4 (см. pump-pwm-controller.js).
 //
@@ -23,7 +31,8 @@ var PidEngine = require('pid-engine.mod').PidEngine;
 
 var PERIOD_SEC = 60;            // период расчёта
 var MAX_STEP = 100;             // ограничение изменения power за цикл (10 % шкалы)
-var TRANSIENT_K = 1.0;          // скачок подачи за цикл, считаем переходным процессом
+var TRANSIENT_K = 1.2;          // изменение подачи за 3 цикла, считаем переходным процессом
+var TRANSIENT_SANE = 3.0;       // ΔT дальше этого от уставки физически неправдоподобна
 var TRANSIENT_PAUSE_SEC = 240;  // сколько ждать после скачка
 var GVS_TOPIC = "wb-mr6cv3_52/Input 2";
 
@@ -59,12 +68,12 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       ki: { title: "Ki", type: "range", value: 0.02, min: 0, max: 1, readonly: false, order: 4 },
       kd: { title: "Kd", type: "range", value: 0, min: 0, max: 200, readonly: false, order: 5 },
       deadband: { title: "Мёртвая зона, K", type: "range", value: 0.3, min: 0, max: 5, readonly: false, order: 6 },
-      bias: { title: "Рабочая точка, %", type: "range", value: 50, min: 0, max: 100, readonly: false, order: 7 },
+      bias: { title: "Рабочая точка (скорость), %", type: "range", value: 50, min: 0, max: 100, readonly: false, order: 7 },
       hold: { title: "Пауза (ручная)", type: "switch", value: false, readonly: false, order: 8 },
       gvs_hold: { title: "Пауза по ГВС", type: "switch", value: false, readonly: false, order: 9 },
       gvs_level: { title: "Активный уровень ГВС (0/1)", type: "range", value: 1, min: 0, max: 1, readonly: false, order: 9.5 },
       delta: { title: "Текущая ΔT, K", type: "value", value: 0, readonly: true, order: 10 },
-      output: { title: "Выход ПИД, %", type: "value", value: 0, readonly: true, order: 11 },
+      output: { title: "Скорость насоса, %", type: "value", value: 0, readonly: true, order: 11 },
       power: { title: "Мощность насоса", type: "value", value: 0, readonly: true, order: 12 },
       status: { title: "Состояние", type: "text", value: "выключен", readonly: true, order: 13 }
     }
@@ -77,7 +86,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
   var pid = new PidEngine(dev[cellKp], dev[cellKi], dev[cellKd], dev[cellDeadband]);
   var lastPower = Number(dev[powerStateTopic]) || 0;
   var wasEnabled = false;
-  var prevInlet = null;
+  var inletHistory = [];
   var pauseUntil = 0;
 
   function setStatus(text) {
@@ -97,7 +106,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       // выключенный регулятор насос не трогает: power остаётся под ручным управлением
       pid.reset();
       wasEnabled = false;
-      prevInlet = null;
+      inletHistory = [];
       pauseUntil = 0;
       dev[cellOutput] = 0;
       setStatus("выключен");
@@ -111,7 +120,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       pid.integral = dev[cellBias];
       pid.lastMeasurement = null;
       wasEnabled = true;
-      prevInlet = null;
+      inletHistory = [];
       pauseUntil = 0;
     }
 
@@ -119,11 +128,21 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
     var inlet = Number(dev[inletTopic]);
     var measurement = Number(dev[deltaTopic]);
 
-    // скачок подачи = переходный процесс (котёл перешёл на БКН или вернулся)
-    if (prevInlet !== null && !isNaN(inlet) && Math.abs(inlet - prevInlet) >= TRANSIENT_K) {
-      pauseUntil = now + TRANSIENT_PAUSE_SEC * 1000;
+    // Переходный процесс — не только мгновенный скачок: при переключении котла
+    // на БКН подача уходит плавно (наблюдалось −0,5 K/мин в течение 2,5 минут),
+    // а возвращается рывком. Поэтому сравниваем с значением 3 цикла назад.
+    // inlet < 5 °C — недостоверное чтение (канал ещё не опубликован, пересоздание VD).
+    if (!isNaN(inlet) && inlet > 5) {
+      inletHistory.push(inlet);
+      if (inletHistory.length > 4) inletHistory.shift();
+      if (inletHistory.length === 4 &&
+          Math.abs(inletHistory[3] - inletHistory[0]) >= TRANSIENT_K) {
+        log(name + ": подача ушла за 3 мин " + inletHistory[0] + " -> " + inletHistory[3] +
+            ", пауза " + TRANSIENT_PAUSE_SEC + " с");
+        pauseUntil = now + TRANSIENT_PAUSE_SEC * 1000;
+        inletHistory = [inlet];
+      }
     }
-    if (!isNaN(inlet)) prevInlet = inlet;
 
     if (dev[cellHold]) {
       setStatus("пауза: вручную");
@@ -135,6 +154,12 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
     }
     if (now < pauseUntil) {
       setStatus("пауза: переходный процесс");
+      return;
+    }
+    if (!isNaN(measurement) && Math.abs(measurement - Number(dev[cellSetpoint])) > TRANSIENT_SANE) {
+      log(name + ": ΔT " + measurement + " вне физического диапазона, пауза");
+      pauseUntil = now + TRANSIENT_PAUSE_SEC * 1000;
+      setStatus("пауза: ΔT вне диапазона");
       return;
     }
 
@@ -153,8 +178,9 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
     pid.kd = dev[cellKd];
     pid.deadband = dev[cellDeadband];
 
-    var out = pid.compute(dev[cellSetpoint], measurement, PERIOD_SEC);  // 0..100
-    var target = 1000 - out * 10;                                        // инверсия: больше ΔT -> больше оборотов
+    var rawOut = pid.compute(dev[cellSetpoint], measurement, PERIOD_SEC);  // 0..100, где 100 = минимум оборотов
+    var out = 100 - rawOut;                                               // наружу: скорость насоса, 0..100 %
+    var target = out * 10;                                                // power = скорость × 10, без инверсии
 
     // ограничение скорости: не более MAX_STEP за цикл
     if (target > lastPower + MAX_STEP) target = lastPower + MAX_STEP;
