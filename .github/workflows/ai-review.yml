@@ -4,24 +4,47 @@ name: AI Review
 # «детерминированные пайплайны + LLM-агент» — селекция/бандлинг файлов,
 # матчинг правил и позиционирование комментариев делаются кодом, агенту
 # остаются только динамические решения и чтение контекста.
-# Модель — LiteLLM-алиас agent/reviewer: алиас, апстрим-модель и дневной
-# бюджет-кап управляются на стороне LiteLLM-прокси.
+#
+# Политика запуска (как в остальных репозиториях): lite — автоматически на
+# каждый PR в main, strong — только вручную: workflow_dispatch с inputs.tier=strong
+# или комментарий «/ai-review hard» к PR. Модель — по тиру, LiteLLM-алиасы
+# agent/ocr-lite (дефолт) и agent/ocr-strong; апстрим-модели и дневной
+# бюджет-кап живут на стороне LiteLLM-прокси.
+#
+# Конфиг перенесён из ozzi/angler-log (там валидирован в бою), в wb заменяет
+# сентябрьскую версию с единственным алиасом agent/reviewer, который к
+# 16.11.2026 отвечал 403 team_model_access_denied — то есть ревью не
+# работало вовсе.
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Номер PR для ревью"
+        required: true
+        type: string
+      tier:
+        description: "Тир модели: lite (gpt-6-luna, дефолт) / strong (gpt-6-sol)"
+        required: false
+        default: "lite"
+        type: choice
+        options: [lite, strong]
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
 
 # Конкурентность по PR. Нюанс из их примера: GitHub оценивает concurrency
 # ДО job-level if — плоская группа от любого комментария к PR убивала бы
-# идущее ревью. Совпадающие события (PR-события + команды /open-code-review
-# от членов) делят группу ocr-<pr>, прочие комментарии уходят в noop-группу
-# этого прогона и скипаются мгновенно.
+# идущее ревью. Совпадающие события (workflow_dispatch + команды
+# /ai-review от членов) делят группу ocr-<pr>, прочие комментарии
+# уходят в noop-группу этого прогона и скипаются мгновенно.
 concurrency:
   group: >-
     ${{
       (
         github.event_name == 'pull_request'
+        || github.event_name == 'workflow_dispatch'
         || (
           github.event_name == 'issue_comment'
           && github.event.issue.pull_request
@@ -32,28 +55,38 @@ concurrency:
             || github.event.comment.author_association == 'COLLABORATOR'
           )
           && (
-            startsWith(github.event.comment.body, '/open-code-review')
-            || startsWith(github.event.comment.body, '@open-code-review')
+            github.event.comment.body == '/ai-review'
+            || startsWith(github.event.comment.body, '/ai-review ')
+            || github.event.comment.body == '@ai-review'
+            || startsWith(github.event.comment.body, '@ai-review ')
           )
         )
       )
-      && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+      && format('ocr-{0}', github.event.pull_request.number || github.event.inputs.pr_number || github.event.issue.number)
       || format('noop-{0}', github.run_id)
     }}
   cancel-in-progress: true
 
 jobs:
   code-review:
-    # PR-события: только не-форки (секреты на форки не выдаются).
-    # Комментарии: только люди с write-доступом и только команды
-    # /open-code-review или @open-code-review — чужие комментарии
-    # не тратят квоту LLM.
-    # Принятый остаточный риск (приватный репо, 2 коллаборатора):
-    # author_association не гарантирует write-права (COLLABORATOR может
-    # быть read-only). Fork head-ветка на issue_comment-пути закрыта
-    # fork-guard'ом в шаге Get PR context.
+    # workflow_dispatch: без префильтра — диспетчить workflow может только
+    # write-доступ; authorized в pr-context вернёт true (минус fork-guard).
+    # Комментарии: только люди с write-доступом и только команда
+    # /ai-review или @ai-review (точное совпадение или пробел —
+    # суффиксы вроде /ai-reviewfoo бюджет не тратят) —
+    # правка по находке security·medium первого ревью PR #33.
+    # Репозиторий приватный, форков не бывает; проверки оставлены как
+    # в эталоне — на случай, если репо станет публичным.
+    # author_association здесь — только грубый префильтр: фактический
+    # permission (admin/maintain/write) проверяется в шаге Get PR context
+    # до выдачи секрета (находка security·high прогона 2).
     if: |-
-      github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+      (
+        github.event_name == 'pull_request'
+        && github.event.pull_request.draft == false
+        && github.event.pull_request.head.repo.fork != true
+      )
+      || github.event_name == 'workflow_dispatch'
       || (
         github.event_name == 'issue_comment'
         && github.event.issue.pull_request
@@ -64,91 +97,207 @@ jobs:
           || github.event.comment.author_association == 'COLLABORATOR'
         )
         && (
-          startsWith(github.event.comment.body, '/open-code-review')
-          || startsWith(github.event.comment.body, '@open-code-review')
+          github.event.comment.body == '/ai-review'
+          || startsWith(github.event.comment.body, '/ai-review ')
+          || github.event.comment.body == '@ai-review'
+          || startsWith(github.event.comment.body, '@ai-review ')
         )
       )
     runs-on: ubuntu-latest
-    # Обычное ревью ~2-5 мин; 25 — потолок против блуждания.
-    timeout-minutes: 25
+    # На быстрой модели ~2-5 мин. 60 — потолок против убийства легитимного
+    # долгого прогона при медленном апстриме: llm_timeout ограничивает
+    # запрос, а не job, бюджет допускает несколько запросов
+    # (находки performance·medium прогонов 2–3).
+    timeout-minutes: 60
     permissions:
       contents: read
       # issues: write — sticky_summary постит комментарий через issues API;
       # без него публикация может завязаться на тонкости маппинга прав PR
       issues: write
       pull-requests: write
+    # Автообновление CLI выключено — иначе ревью падает через раз.
+    #
+    # `ocr` при каждом запуске поднимает в фоне scripts/update.js, а тот при
+    # наличии новой версии делает `npm i -g` — то есть сначала удаляет
+    # старый пакет с бинарником и только потом ставит новый. В этом окне
+    # бинарника нет на диске, и вызов `ocr review`, попавший в него, падает
+    # с «ocr: command not found» (exit 127). На раннере метки времени
+    # обновления нет (машина каждый раз новая), поэтому проверка запускается
+    # на каждом прогоне, а попадание в окно — лотерея: отсюда «то падает,
+    # то нет» и то, что повторный запрос обычно проходит.
+    #
+    # Апстрим знает об этом: alibaba/open-code-review#703 (описание причины)
+    # и #704, #1204 (исправления, пока открыты). Версию мы и так фиксируем
+    # входом ocr_version, поэтому автообновление нам не нужно вовсе.
+    env:
+      OCR_NO_UPDATE: "1"
     steps:
+      - name: Проверить секрет ревьюера
+        # Секрет нельзя спросить в if:, поэтому проверяем его в env шага.
+        # Без ключа ревью не запускается, но PR остаётся зелёным: ревью —
+        # совет, а не гейт (как в esoterics).
+        id: secret
+        env:
+          REVIEWER_KEY: ${{ secrets.LITELLM_REVIEWER_KEY }}
+        run: |
+          if [ -n "$REVIEWER_KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=AI Review::секрет LITELLM_REVIEWER_KEY не задан — ревью пропущено"
+          fi
+
       - name: Get PR context
         id: pr-context
-        if: github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         with:
           script: |
-            // issue_comment не несёт pull_request-поля верхнего уровня —
-            // резолвим base/head руками, чтобы OCR ревьюил правильный diff.
-            const prNumber = context.issue.number;
+            // На issue_comment github.event.issue.pull_request указывает
+            // на PR, но полных данных о нём нет — резолвим base/head
+            // руками, чтобы OCR ревьюил правильный diff. На
+            // workflow_dispatch номер PR берём из inputs.pr_number.
+            const prNumber = context.eventName === 'workflow_dispatch'
+              ? Number(context.payload.inputs?.pr_number)
+              : context.issue.number;
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`pr_number must be a positive integer, got '${context.payload.inputs?.pr_number ?? ''}'`);
+              return;
+            }
             const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber
             });
-            // Fork-guard (security·high из ревью OCR): head из форка не
-            // ревьюим с нашими секретами — шаг прогона будет пропущен.
-            // head.repo == null (форк удалён/недоступен) тоже считаем
-            // форком — fail-closed, не fail-open.
-            if (!pullRequest.head.repo || pullRequest.head.repo.fork) {
-              core.notice('Fork PR: ревью с секретами запрещено — пропускаю.');
-              core.setOutput('fork', 'true');
-              return;
-            }
-            core.setOutput('fork', 'false');
             core.setOutput('base_ref', pullRequest.base.ref);
             core.setOutput('head_sha', pullRequest.head.sha);
+            // Единый гейт допуска — consolidация по находке
+            // maintainability·low прогона 4 PR #33 (issue #34, задача 3):
+            // шаг ревью смотрит только на authorized.
+            // Fork-guard (находка security·high первого ревью PR #33):
+            // оба пути (workflow_dispatch и issue_comment) имеют доступ
+            // к секрету и write-токену — head-ветка из форка на ревью
+            // не допускается. Null head.repo (удалённый форк) трактуем
+            // как форк — fail-closed без исключения
+            // (находка maintainability·medium прогона 2).
+            const headRepo = pullRequest.head && pullRequest.head.repo;
+            const isFork = !headRepo || headRepo.fork === true;
+            // Фактический permission автора (находка security·high прогона 2):
+            // author_association в job-if — грубый префильтр, авторитетная
+            // проверка здесь. COLLABORATOR оставлен в префильтре, иначе
+            // второй коллаборатор не смог бы запросить ревью; read-only
+            // коллабораторы отсеиваются этим шагом и бюджет не тратят.
+            // На workflow_dispatch проверка не выполняется — canReview=true,
+            // authorized решает fork-guard.
+            // Сбой API (404 без collaborator-record, сеть) — fail-closed
+            // без падения шага: can_review=false, причина в warning
+            // (находка maintainability·medium прогона 3).
+            let canReview = true;
+            if (context.eventName === 'issue_comment') {
+              try {
+                const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: context.payload.comment.user.login
+                });
+                canReview = ['admin', 'maintain', 'write'].includes(permission.permission);
+              } catch (error) {
+                // fail-closed: без ответа API право write не доказано
+                canReview = false;
+                core.warning(`Permission lookup failed, review skipped: ${error.message}`);
+              }
+            }
+            // Контекст для ревью: заголовок PR и первые 1000 символов описания.
+            // Документация OCR называет --background самым выгодным флагом:
+            // с контекстом модель реже ходит в file_read/code_search.
+            const prTitle = pullRequest.title || '';
+            const prBody = (pullRequest.body || '').slice(0, 1000);
+            core.setOutput('background', `PR: ${prTitle}\n\n${prBody}`.trim());
+            core.setOutput('authorized', String(!isFork && canReview));
+
+      - name: Resolve review tier
+        id: tier
+        if: github.event_name == 'issue_comment' || github.event_name == 'workflow_dispatch'
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          INPUT_TIER: ${{ inputs.tier }}
+        run: |
+          TIER="${INPUT_TIER:-lite}"
+          if [ "$TIER" != "strong" ] && grep -qiE '(^|[[:space:]])hard([[:space:]]|$)' <<< "$COMMENT_BODY"; then
+            TIER="strong"
+          fi
+          echo "tier=$TIER" >> "$GITHUB_OUTPUT"
+          if [ "$TIER" = "strong" ]; then
+            echo "model=agent/ocr-strong" >> "$GITHUB_OUTPUT"
+            echo "effort=high" >> "$GITHUB_OUTPUT"
+            echo "budget=1000000" >> "$GITHUB_OUTPUT"
+          else
+            echo "model=agent/ocr-lite" >> "$GITHUB_OUTPUT"
+            # low = один раунд вместо двух: главный рычаг стоимости на автопрогоне
+            echo "effort=low" >> "$GITHUB_OUTPUT"
+            echo "budget=600000" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run OpenCodeReview
-        # Пропуск для форк-head PR из issue_comment-пути (fork-guard выше);
-        # для pull_request-событий шаг pr-context не выполнялся и выход
-        # пуст → != 'true' → прогон идёт штатно
-        if: steps.pr-context.outputs.fork != 'true'
-        # Пин по commit SHA тега v1.12.8: action получает llm_auth_token и
+        # Секрет и write-токен не выдаются: единый гейт authorized из
+        # pr-context (не-форк && фактическое право write; на
+        # workflow_dispatch canReview=true — authorized решает fork-guard).
+        if: steps.secret.outputs.has_key == 'true' && steps.pr-context.outputs.authorized != 'false'
+        # Пин по commit SHA тега v1.13.3: action получает llm_auth_token и
         # пишет в PR — mutable-тег апстрима был бы supply-chain риском
-        uses: alibaba/open-code-review@5c7b38381d1fdd36de6cf622a2a1f768243c4704 # v1.12.8
+        uses: alibaba/open-code-review@375f64cd6f67a48a135da83cfcf59c52669a09cb # v1.13.3
         with:
+          # Номер PR экшену нужен сам по себе: по нему он постит комментарии.
+          # На комментарии к PR он берёт его из события, а при ручном запуске
+          # (`workflow_dispatch`) в событии PR нет — без этого входа прогон
+          # падал на проверке «No pull request number» ещё до ревью.
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number || github.event.issue.number }}
           # LiteLLM как OpenAI-совместимый endpoint (алиас резолвится
           # на стороне прокси); токен — LITELLM_REVIEWER_KEY с бюджет-капом
           llm_url: "https://llm.outzzz.tech/v1/chat/completions"
           llm_auth_token: ${{ secrets.LITELLM_REVIEWER_KEY }}
-          llm_model: "agent/reviewer"
+          llm_model: ${{ steps.tier.outputs.model || 'agent/ocr-lite' }}
           llm_use_anthropic: "false"
           # Ответ ревью на русском
           language: "Russian"
           # Пин CLI: без него action ставит latest с npm
-          ocr_version: "1.12.8"
-          # DeepSeek-flash через LiteLLM иногда отвечает дольше 300с
-          # на запрос (run 35612743351: 2 × timeout) — поднят до 600
+          ocr_version: "1.13.3"
+          # Медленный апстрим иногда отвечает дольше 300с на запрос —
+          # поднят до 600 (бой в wb: 2 × timeout на дефолте)
           llm_timeout: "600"
           # Пустой extra_body: дефолт экшена шлёт GLM-овский ключ "thinking",
-          # который прямой OpenAI API отвергнет как неизвестное поле
+          # который OpenAI-маршрут отвергнет как неизвестное поле
           llm_extra_body: "{}"
-          # Жёсткий токен-кап на прогон (страховка к LiteLLM-бюджету):
-          # перерасход репортится как failed(budget), частичный результат
-          # публикуется, exit 0. 400K: на реальном PR (~600 строк, 6 файлов)
-          # фактический расход 295K>200K и хвост файлов ушёл в partial;
-          # с luna ($0.08/полный прогон) запас не разоряет бюджет дня
-          max_tokens_budget: "400000"
+          # Жёсткий токен-кап на прогон (страховка к LiteLLM-бюджету).
+          # 200K не хватало даже мелким PR: расход определяется не размером
+          # диффа, а тем, сколько агент начитает по ходу. Он читает файлы
+          # целиком (в PR трофея — handlers.ts на 1200 строк, db.ts на 1134),
+          # и каждый следующий запрос отправляет накопленный контекст заново:
+          # у #86 одна группа съела 231K, у #51 — 578K (95 % из них вход,
+          # 330K — попадание в промпт-кэш). При малом капе прогон
+          # останавливался, не посмотрев ничего, и падал с exit 1
+          # («13 of 13 selected item(s) failed»).
+          # 600K — с запасом на большой PR; это всё равно страховка, а не
+          # рабочий лимит: настоящий дневной бюджет живёт на стороне LiteLLM.
+          # Контекст PR: заголовок и начало описания (см. шаг Get PR context).
+          # Рычаг качества: меньше tool-вызовов на чтение файлов.
+          background: ${{ steps.pr-context.outputs.background }}
+          # Раунды ревью по тиру: lite — 1, strong — 3 (дефолт OCR — medium, 2).
+          effort: ${{ steps.tier.outputs.effort || 'low' }}
+          # Потолок на подзадачу; дефолт 15 минут мал для диффов в 1000+ строк.
+          review_task_timeout: "20"
+          # Клапан обрыва: lite 600k, strong 1M. Не лимит расходов, а граница
+          # полноты: за капом прогон завершается успешно с частичным ревью.
+          max_tokens_budget: ${{ steps.tier.outputs.budget || '600000' }}
           # Прогресс прогона в лог workflow — прозрачность при валидации
           stream_progress: "true"
           # Один «липкий» summary-комментарий обновляется, а не дублируется
           sticky_summary: "true"
-          # Инкрементальные inline-комментарии: не дублировать замечания
-          # между прогонами (скипаются совпадающие по path+line)
+          # Инкрементальные inline-комментарии: повторные прогоны не
+          # дублируют прежние находки (issue #34, задача 1)
           incremental: "true"
-          # Кросс-пушевые чекпоинты: после полного ревью следующий прогон
-          # ревьюит только <checkpoint>..<new head>; любое сомнение
-          # (сдвиг base, смена конфига, битая запись) — полный ревью
-          # (fail-closed). Требует sticky_summary ✓
+          # Ревью диапазона между пушами, fail-closed (issue #34, задача 2)
           checkpoint_range: "true"
-          # Для issue_comment-триггера резолвим base/head явно (pull_request-
-          # события OCR берёт из payload; пустые строки игнорируются)
+          # Оба пути (workflow_dispatch и issue_comment) резолвят base/head
+          # явно в pr-context; пустые строки OCR игнорирует
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
