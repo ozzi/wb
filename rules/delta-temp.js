@@ -22,6 +22,7 @@ function makeDeltaTemp(name, title, inletTopic, outletTopic, offsetInlet, offset
   var cellDelta = deviceName + "/delta";
   var cellOffIn = deviceName + "/offset_inlet";
   var cellOffOut = deviceName + "/offset_outlet";
+  var cellValid = deviceName + "/valid";
 
   defineVirtualDevice(deviceName, {
     title: title,
@@ -30,20 +31,35 @@ function makeDeltaTemp(name, title, inletTopic, outletTopic, offsetInlet, offset
       outlet: { title: "Обратка, °C", type: "temperature", value: 0, readonly: true, order: 2 },
       delta: { title: "ΔT, K", type: "value", value: 0, readonly: true, order: 3 },
       offset_inlet: { title: "Поправка подачи, K", type: "range", value: offsetInlet, min: -5, max: 5, readonly: false, order: 4 },
-      offset_outlet: { title: "Поправка обратки, K", type: "range", value: offsetOutlet, min: -5, max: 5, readonly: false, order: 5 }
+      offset_outlet: { title: "Поправка обратки, K", type: "range", value: offsetOutlet, min: -5, max: 5, readonly: false, order: 5 },
+      valid: { title: "Данные датчиков достоверны", type: "switch", value: false, readonly: true, order: 6 }
     }
   });
 
   var errorTopic = "/devices/" + deviceName + "/controls/delta/meta/error";
 
+  // meta/error публикуем только при смене состояния: событие приходит на каждый
+  // отсчёт датчика (десятки раз в минуту), а пустой retained-пакет каждый раз — лишний трафик
+  var lastError = "";
+
+  function setError(msg) {
+    if (msg === lastError) return;
+    lastError = msg;
+    publish(errorTopic, msg, 2, true);
+  }
+
   function recalc() {
     var a = dev[inletTopic];
     var b = dev[outletTopic];
     if (typeof a !== "number" || typeof b !== "number" || isNaN(a) || isNaN(b)) {
-      publish(errorTopic, "r", 2, true);
+      // ячейки остаются на последнем значении, поэтому потребитель (ПИД) смотрит
+      // не на delta, а на флаг valid — иначе он считает по застывшему числу
+      setError("r");
+      dev[cellValid] = false;
       return;
     }
-    publish(errorTopic, "", 2, true);
+    setError("");
+    dev[cellValid] = true;
     var offIn = Number(dev[cellOffIn]) || 0;
     var offOut = Number(dev[cellOffOut]) || 0;
     dev[cellInlet] = a;

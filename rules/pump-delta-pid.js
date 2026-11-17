@@ -58,6 +58,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
   var cellOutput = deviceName + "/output";
   var cellPower = deviceName + "/power";
   var cellStatus = deviceName + "/status";
+  var cellSensorsOk = "delta-temp-" + name + "/valid";
 
   defineVirtualDevice(deviceName, {
     title: title,
@@ -88,6 +89,14 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
   var wasEnabled = false;
   var inletHistory = [];
   var pauseUntil = 0;
+
+  var lastErr = "";
+
+  function setError(msg) {
+    if (msg === lastErr) return;
+    lastErr = msg;
+    publish(errTopic, msg, 2, true);
+  }
 
   function setStatus(text) {
     if (dev[cellStatus] !== text) dev[cellStatus] = text;
@@ -148,6 +157,7 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
 
     if (dev[cellHold]) {
       setStatus("пауза: вручную");
+      pid.lastMeasurement = null;   // иначе D на выходе из паузы считает скачок из старой точки
       return;
     }
     // ГВС: при включённом учёте недоступный топик (NaN) трактуем как «сигнал есть»
@@ -156,29 +166,37 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
       var gvsRaw = Number(dev[GVS_TOPIC]);
       if (isNaN(gvsRaw) || gvsRaw === Number(dev[cellGvsLevel])) {
         setStatus(isNaN(gvsRaw) ? "пауза: ГВС (нет сигнала)" : "пауза: ГВС");
+        pid.lastMeasurement = null;
         return;
       }
     }
     if (now < pauseUntil) {
       setStatus("пауза: переходный процесс");
+      pid.lastMeasurement = null;
       return;
     }
     if (!isNaN(measurement) && Math.abs(measurement - Number(dev[cellSetpoint])) > TRANSIENT_SANE) {
       log(name + ": ΔT " + measurement + " вне физического диапазона, пауза");
       pauseUntil = now + TRANSIENT_PAUSE_SEC * 1000;
       setStatus("пауза: ΔT вне диапазона");
+      pid.lastMeasurement = null;
       return;
     }
 
-    if (isNaN(measurement) || typeof dev[deltaTopic] !== "number") {
-      publish(errTopic, "r", 2, true);
+    // Достоверность: delta-temp держит флаг valid. Ячейка delta при отвале датчика
+    // замирает на последнем значении, поэтому одной проверки на NaN недостаточно.
+    if (dev[cellSensorsOk] === false || isNaN(measurement) || typeof dev[deltaTopic] !== "number") {
+      setError("r");
       pid.reset();
+      // после возврата данных инициализируемся заново: иначе интеграл останется
+      // нулевым и регулятор начнёт с края шкалы (out = 100 %) вместо bias
+      wasEnabled = false;
       dev[cellOutput] = 0;
       setPower(0);
-      setStatus("нет ΔT — насос на минимум");
+      setStatus("нет данных датчиков — насос на минимум");
       return;
     }
-    publish(errTopic, "", 2, true);
+    setError("");
 
     pid.kp = dev[cellKp];
     pid.ki = dev[cellKi];
