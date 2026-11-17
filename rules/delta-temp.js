@@ -40,7 +40,9 @@ function makeDeltaTemp(name, title, inletTopic, outletTopic, offsetInlet, offset
 
   // meta/error публикуем только при смене состояния: событие приходит на каждый
   // отсчёт датчика (десятки раз в минуту), а пустой retained-пакет каждый раз — лишний трафик
-  var lastError = "";
+  // null, а не "": иначе первый setError("") будет подавлен сравнением и retained-ошибка
+  // "r" от прошлой сессии останется в meta, хотя данные уже пришли
+  var lastError = null;
 
   function setError(msg) {
     if (msg === lastError) return;

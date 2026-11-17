@@ -90,7 +90,8 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
   var inletHistory = [];
   var pauseUntil = 0;
 
-  var lastErr = "";
+  // null, а не "": первый setError("") должен снять retained-ошибку прошлой сессии
+  var lastErr = null;
 
   function setError(msg) {
     if (msg === lastErr) return;
@@ -185,11 +186,12 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
 
     // Достоверность: delta-temp держит флаг valid. Ячейка delta при отвале датчика
     // замирает на последнем значении, поэтому одной проверки на NaN недостаточно.
-    if (dev[cellSensorsOk] === false || isNaN(measurement) || typeof dev[deltaTopic] !== "number") {
+    // !== true, а не === false: отсутствующий канал (переименование VD, порядок
+    // загрузки) не должен читаться как «данные достоверны» — это fail-closed
+    if (dev[cellSensorsOk] !== true || isNaN(measurement) || typeof dev[deltaTopic] !== "number") {
       setError("r");
-      pid.reset();
-      // после возврата данных инициализируемся заново: иначе интеграл останется
-      // нулевым и регулятор начнёт с края шкалы (out = 100 %) вместо bias
+      // следующая итерация пройдёт блок !wasEnabled: он сам сделает pid.reset()
+      // и загрузит bias, поэтому отдельный reset здесь не нужен
       wasEnabled = false;
       dev[cellOutput] = 0;
       setPower(0);
