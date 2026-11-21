@@ -181,9 +181,11 @@ cells.valid = { title: "Данные пригодны", type: "switch", value: f
 cells.status = { title: "Состояние", type: "text", value: "нет данных", readonly: true, order: order++ };
 cells.updated = { title: "Обновлено", type: "text", value: "—", readonly: true, order: order++ };
 
-if (typeof defineVirtualDevice === "function") {
-  defineVirtualDevice(DEV, { title: "Теплопотери по комнатам", cells: cells });
-}
+// Побочные эффекты намеренно безусловные: в Duktape обёртка `if (typeof defineRule
+// === "function")` приводит к тому, что wb-rules на каждом тике валится с
+// «TypeError: call target not an object» (проверено на контроллере 22.11.2026).
+// Для тестов в Node глобалы defineVirtualDevice/defineRule/dev подставляются заглушками.
+defineVirtualDevice(DEV, { title: "Теплопотери по комнатам", cells: cells });
 
 // Ноль — законное показание (остывание дома до 0 °C — как раз тот случай, ради
 // которого монитор и нужен). «Нет данных» помечается значением NO_DATA.
@@ -263,24 +265,22 @@ var triggers = [];
 for (var n = 0; n < ROOMS.length; n++) triggers.push(DEV + "/t-" + ROOMS[n].id);
 triggers.push(OUTDOOR);
 
-// побочные эффекты wb-rules выполняются только на контроллере: в Node эти глобалы
-// отсутствуют, и без проверки require() падал бы до module.exports
-if (typeof defineRule === "function") {
-  defineRule("heat_loss_inputs", {
-    whenChanged: triggers,
-    then: function () { recalc(); }
-  });
+defineRule("heat_loss_inputs", {
+  whenChanged: triggers,
+  then: function () { recalc(); }
+});
 
-  defineRule("heat_loss_cron", {
-    when: { cron: "*/10 * * * *" },
-    then: function () { recalc(); }
-  });
+// Периодика — только через cron(...): объект вида { cron: "..." } wb-rules
+// пытается вызвать как функцию и падает с «call target not an object» на каждом тике.
+defineRule("heat_loss_cron", {
+  when: cron("*/10 * * * *"),
+  then: function () { recalc(); }
+});
 
-  defineRule("heat_loss_start", {
-    when: function () { return true; },
-    then: function () { resetInputs(); recalc(); }
-  });
-}
+// Первый расчёт при загрузке правила: входам не доверяем (в MQTT могли остаться
+// значения прошлой версии), поэтому сначала сброс в NO_DATA, потом счёт.
+resetInputs();
+recalc();
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { ROOMS: ROOMS, calcHouse: calcHouse, roomLoss: roomLoss,
