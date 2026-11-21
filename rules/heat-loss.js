@@ -37,6 +37,10 @@ var DEV = "heat-loss";
 // правдоподобное, но неверное число вместо честного «нет датчика».
 var OUTDOOR = "wb-m1w2_107/External Sensor 1";
 
+// Маркер «данных ещё не было». Обязан лежать вне диапазонов plausibleT/plausibleOut
+// (-40…60 и -45…45): если диапазоны расширить за -999, маркер станет показанием.
+var NO_DATA = -999;
+
 var T_PODVAL = 8;          // температура подвала/грунта, °C
 var K_AIR = 0.34;          // объёмная теплоёмкость воздуха, Вт·ч/(м³·К)
 var L_VENT = 170;          // нормативный воздухообмен, м³/ч
@@ -156,13 +160,13 @@ var cells = {};
 var order = 1;
 for (var i = 0; i < ROOMS.length; i++) {
   cells["t-" + ROOMS[i].id] = { title: ROOMS[i].title + ": температура, °C", type: "temperature",
-                                value: -999, readonly: false, order: order++ };
+                                value: NO_DATA, readonly: false, order: order++ };
 }
 for (var j = 0; j < ROOMS.length; j++) {
   cells["w-" + ROOMS[j].id] = { title: ROOMS[j].title + ": потери, Вт", type: "value",
                                 value: 0, readonly: true, order: order++ };
 }
-cells["t-out"] = { title: "Улица, °C", type: "temperature", value: -999, readonly: true, order: order++ };
+cells["t-out"] = { title: "Улица, °C", type: "temperature", value: NO_DATA, readonly: true, order: order++ };
 cells["total-w"] = { title: "Теплопотери дома, Вт", type: "value", value: 0, readonly: true, order: order++ };
 cells["floor1-w"] = { title: "1 этаж, Вт", type: "value", value: 0, readonly: true, order: order++ };
 cells["floor2-w"] = { title: "2 этаж, Вт", type: "value", value: 0, readonly: true, order: order++ };
@@ -182,8 +186,7 @@ if (typeof defineVirtualDevice === "function") {
 }
 
 // Ноль — законное показание (остывание дома до 0 °C — как раз тот случай, ради
-// которого монитор и нужен). «Нет данных» помечается значением вне диапазона:
-// каналы t-* стартуют с -999, пока HA не пришлёт первое измерение.
+// которого монитор и нужен). «Нет данных» помечается значением NO_DATA.
 function inRange(t, min, max) {
   return typeof t === "number" && !isNaN(t) && t > min && t < max;
 }
@@ -205,6 +208,15 @@ function put(cell, value) {
 function readOutdoor() {
   var t = dev[OUTDOOR];
   return plausibleOut(t) ? t : null;
+}
+
+// Сброс входов при загрузке правила. Значения каналов VD персистятся в MQTT и при
+// переопределении устройства не сбрасываются: на контроллере, где работала прежняя
+// версия, в t-* остался её стартовый 0, а теперь 0 — законное показание. Без сброса
+// первая же секунда после обновления дала бы «дом при 0 °C» и valid = true.
+function resetInputs() {
+  for (var i = 0; i < ROOMS.length; i++) put("t-" + ROOMS[i].id, NO_DATA);
+  put("t-out", NO_DATA);
 }
 
 function recalc() {
@@ -266,7 +278,7 @@ if (typeof defineRule === "function") {
 
   defineRule("heat_loss_start", {
     when: function () { return true; },
-    then: function () { recalc(); }
+    then: function () { resetInputs(); recalc(); }
   });
 }
 
