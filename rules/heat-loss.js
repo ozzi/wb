@@ -184,8 +184,8 @@ cells.updated = { title: "Обновлено", type: "text", value: "—", reado
 // Побочные эффекты намеренно безусловные — как во всех остальных правилах репозитория.
 // «TypeError: call target not an object» на каждом тике давала не обёртка, а объектная
 // форма when: { cron: "..." } (см. комментарий у heat_loss_cron).
-// Для тестов в Node подставляются заглушки: global.dev, defineVirtualDevice,
-// defineRule и cron — полный набор, иначе require() падает до module.exports.
+// Проверка без контроллера: `node tests/heat-loss.test.js` (там глобалы dev,
+// defineVirtualDevice, defineRule и cron подменены заглушками до require()).
 defineVirtualDevice(DEV, { title: "Теплопотери по комнатам", cells: cells });
 
 // Ноль — законное показание (остывание дома до 0 °C — как раз тот случай, ради
