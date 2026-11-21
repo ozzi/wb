@@ -32,6 +32,11 @@
 
 var DEV = "heat-loss";
 
+// Единственный источник уличной температуры: wb-m1w2_107 в уличной коробке.
+// Резервный wb-m1w2_33 не используется: он стоит не на улице, и подмена дала бы
+// правдоподобное, но неверное число вместо честного «нет датчика».
+var OUTDOOR = "wb-m1w2_107/External Sensor 1";
+
 var T_PODVAL = 8;          // температура подвала/грунта, °C
 var K_AIR = 0.34;          // объёмная теплоёмкость воздуха, Вт·ч/(м³·К)
 var L_VENT = 170;          // нормативный воздухообмен, м³/ч
@@ -151,13 +156,13 @@ var cells = {};
 var order = 1;
 for (var i = 0; i < ROOMS.length; i++) {
   cells["t-" + ROOMS[i].id] = { title: ROOMS[i].title + ": температура, °C", type: "temperature",
-                                value: 0, readonly: false, order: order++ };
+                                value: -999, readonly: false, order: order++ };
 }
 for (var j = 0; j < ROOMS.length; j++) {
   cells["w-" + ROOMS[j].id] = { title: ROOMS[j].title + ": потери, Вт", type: "value",
                                 value: 0, readonly: true, order: order++ };
 }
-cells["t-out"] = { title: "Улица, °C", type: "temperature", value: 0, readonly: true, order: order++ };
+cells["t-out"] = { title: "Улица, °C", type: "temperature", value: -999, readonly: true, order: order++ };
 cells["total-w"] = { title: "Теплопотери дома, Вт", type: "value", value: 0, readonly: true, order: order++ };
 cells["floor1-w"] = { title: "1 этаж, Вт", type: "value", value: 0, readonly: true, order: order++ };
 cells["floor2-w"] = { title: "2 этаж, Вт", type: "value", value: 0, readonly: true, order: order++ };
@@ -172,15 +177,19 @@ cells.valid = { title: "Данные пригодны", type: "switch", value: f
 cells.status = { title: "Состояние", type: "text", value: "нет данных", readonly: true, order: order++ };
 cells.updated = { title: "Обновлено", type: "text", value: "—", readonly: true, order: order++ };
 
-defineVirtualDevice(DEV, { title: "Теплопотери по комнатам", cells: cells });
-
-function plausibleT(t) {
-  return typeof t === "number" && !isNaN(t) && t > -40 && t < 60 && t !== 0;
+if (typeof defineVirtualDevice === "function") {
+  defineVirtualDevice(DEV, { title: "Теплопотери по комнатам", cells: cells });
 }
 
-function plausibleOut(t) {
-  return typeof t === "number" && !isNaN(t) && t > -45 && t < 45 && t !== 0;
+// Ноль — законное показание (остывание дома до 0 °C — как раз тот случай, ради
+// которого монитор и нужен). «Нет данных» помечается значением вне диапазона:
+// каналы t-* стартуют с -999, пока HA не пришлёт первое измерение.
+function inRange(t, min, max) {
+  return typeof t === "number" && !isNaN(t) && t > min && t < max;
 }
+
+function plausibleT(t) { return inRange(t, -40, 60); }
+function plausibleOut(t) { return inRange(t, -45, 45); }
 
 function two(n) { return (n < 10 ? "0" : "") + n; }
 function stamp() {
@@ -194,8 +203,7 @@ function put(cell, value) {
 }
 
 function readOutdoor() {
-  var t = dev["wb-m1w2_107/External Sensor 1"];
-  if (!plausibleOut(t)) t = dev["wb-m1w2_33/temperature 1"];
+  var t = dev[OUTDOOR];
   return plausibleOut(t) ? t : null;
 }
 
@@ -241,23 +249,26 @@ function recalc() {
 
 var triggers = [];
 for (var n = 0; n < ROOMS.length; n++) triggers.push(DEV + "/t-" + ROOMS[n].id);
-triggers.push("wb-m1w2_107/External Sensor 1");
-triggers.push("wb-m1w2_33/temperature 1");
+triggers.push(OUTDOOR);
 
-defineRule("heat_loss_inputs", {
-  whenChanged: triggers,
-  then: function () { recalc(); }
-});
+// побочные эффекты wb-rules выполняются только на контроллере: в Node эти глобалы
+// отсутствуют, и без проверки require() падал бы до module.exports
+if (typeof defineRule === "function") {
+  defineRule("heat_loss_inputs", {
+    whenChanged: triggers,
+    then: function () { recalc(); }
+  });
 
-defineRule("heat_loss_cron", {
-  when: { cron: "*/10 * * * *" },
-  then: function () { recalc(); }
-});
+  defineRule("heat_loss_cron", {
+    when: { cron: "*/10 * * * *" },
+    then: function () { recalc(); }
+  });
 
-defineRule("heat_loss_start", {
-  when: function () { return true; },
-  then: function () { recalc(); }
-});
+  defineRule("heat_loss_start", {
+    when: function () { return true; },
+    then: function () { recalc(); }
+  });
+}
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { ROOMS: ROOMS, calcHouse: calcHouse, roomLoss: roomLoss,
