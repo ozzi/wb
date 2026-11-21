@@ -17,10 +17,11 @@
 //   5. Вентиляция естественная (кухня, два санузла, детская): вместо кратности 0.237 1/ч
 //      нормативный воздухообмен 170 м³/ч (90 кухня + 25 + 25 санузлы + 30 детская),
 //      приток распределён по жилым помещениям долями vent.
-//   6. Расчётная улица −27 °C (СП 131.13330 для Самары) вместо −25.
-//   7. Площадь для удельных потерь — фактическая сумма 193.79 м², а не круглые 200.
-//   8. Расчёт конвекторов не ведётся: модель отвечает на вопрос «сколько теряет дом», а не
+//   6. Площадь для удельных потерь — фактическая сумма 193.79 м², а не круглые 200.
+//   7. Расчёт конвекторов не ведётся: модель отвечает на вопрос «сколько теряет дом», а не
 //      «чем добрать». Мощность ТП в модели не участвует.
+//   8. Проектный расчёт при −27 °C убран: правило считает только по фактической уличной
+//      температуре, без второго числа «а если мороз».
 //
 // Температуры комнат приходят из HA (Zigbee в ZHA, WB их не видит): HA пишет значения
 // в каналы t-* этого VD, правило читает их и считает потери. Отвалившийся или нулевой датчик
@@ -31,7 +32,6 @@
 
 var DEV = "heat-loss";
 
-var T_OUT_RASCH = -27;     // расчётная температура улицы, °C (Самара, СП 131.13330)
 var T_PODVAL = 8;          // температура подвала/грунта, °C
 var K_AIR = 0.34;          // объёмная теплоёмкость воздуха, Вт·ч/(м³·К)
 var L_VENT = 170;          // нормативный воздухообмен, м³/ч
@@ -167,8 +167,6 @@ cells["win-w"] = { title: "Окна, Вт", type: "value", value: 0, readonly: t
 cells["vent-w"] = { title: "Вентиляция, Вт", type: "value", value: 0, readonly: true, order: order++ };
 cells["floor-w"] = { title: "Пол, Вт", type: "value", value: 0, readonly: true, order: order++ };
 cells["ceil-w"] = { title: "Потолок и крыша, Вт", type: "value", value: 0, readonly: true, order: order++ };
-cells["proj-w"] = { title: "При −27 °C, Вт", type: "value", value: 0, readonly: true, order: order++ };
-cells["proj-w-m2"] = { title: "При −27 °C, Вт/м²", type: "value", value: 0, readonly: true, order: order++ };
 cells["rooms-on-project"] = { title: "Комнат без датчика", type: "value", value: 0, readonly: true, order: order++ };
 cells.valid = { title: "Данные пригодны", type: "switch", value: false, readonly: true, order: order++ };
 cells.status = { title: "Состояние", type: "text", value: "нет данных", readonly: true, order: order++ };
@@ -222,7 +220,6 @@ function recalc() {
   for (var k = 0; k < ROOMS.length; k++) {
     put("w-" + ROOMS[k].id, Math.round(h.perRoom[ROOMS[k].id].total));
   }
-  var proj = calcHouse(T_OUT_RASCH, null);
 
   put("t-out", Math.round(tOut * 10) / 10);
   put("total-w", Math.round(h.total));
@@ -234,8 +231,6 @@ function recalc() {
   put("vent-w", Math.round(h.vent));
   put("floor-w", Math.round(h.floorLoss));
   put("ceil-w", Math.round(h.ceil));
-  put("proj-w", Math.round(proj.total));
-  put("proj-w-m2", Math.round(proj.perM2 * 10) / 10);
   put("rooms-on-project", missing.length);
   put("valid", missing.length === 0);
   put("status", missing.length === 0
@@ -266,6 +261,6 @@ defineRule("heat_loss_start", {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { ROOMS: ROOMS, calcHouse: calcHouse, roomLoss: roomLoss,
-                     T_OUT_RASCH: T_OUT_RASCH, AREA_HOUSE: AREA_HOUSE, L_VENT: L_VENT,
+                     AREA_HOUSE: AREA_HOUSE, L_VENT: L_VENT,
                      R_WALL: R_WALL, R_CEIL: R_CEIL, R_FLOOR: R_FLOOR };
 }
