@@ -206,14 +206,24 @@ for (var i = 0; i < CFG.targets.length; i++) {
 
 // ---------- логика ----------
 
+// Пишем в VD только при реальном изменении: каждое сообщение в топик
+// срабатывает как MQTT-триггер в HA, и безусловная запись на каждом тике
+// превращается в спам пушей (проверено на живой автоматизации).
+function setCell(t, control, value) {
+    var topic = t.key + '-keepalive/' + control;
+    if (dev[topic] !== value) {
+        dev[topic] = value;
+    }
+}
+
 function setAlert(t, code, text) {
-    dev[t.key + '-keepalive/alert_code'] = code;
-    dev[t.key + '-keepalive/alert_text'] = text;
+    setCell(t, 'alert_code', code);
+    setCell(t, 'alert_text', text);
 }
 
 function setState(t, state, reason, alertCode, alertText) {
-    dev[t.key + '-keepalive/state'] = state;
-    dev[t.key + '-keepalive/reason'] = reason;
+    setCell(t, 'state', state);
+    setCell(t, 'reason', reason);
     setAlert(t, alertCode, alertText);
 }
 
@@ -239,8 +249,8 @@ function heal(t) {
             var list = loadHealTimes(key);
             list.push(now);
             list = saveHealTimes(key, list);
-            dev[t.key + '-keepalive/last_heal'] = fmtTime(now);
-            dev[t.key + '-keepalive/heal_count'] = list.length;
+            setCell(t, 'last_heal', fmtTime(now));
+            setCell(t, 'heal_count', list.length);
             setState(t, STATE.HEALED, 'связь восстановилась, сценарий включён',
                 2, t.label + ': сценарий включён обратно, связь восстановилась');
             log.info(t.label + ': сценарий вылечен, лечений за 6 ч: ' + list.length);
@@ -265,7 +275,7 @@ function tick(t) {
 
     if (errText !== '') {
         store[key] = now;
-        dev[t.key + '-keepalive/last_error'] = fmtTime(now) + ' — ' + errText;
+        setCell(t, 'last_error', fmtTime(now) + ' — ' + errText);
         if (dev[t.vd + '/rule_enabled'] === false) {
             setState(t, STATE.CHANNEL_ERROR, 'канал в критической ошибке, сценарий уже выключен',
                 1, t.label + ': сценарий выключен, связь с каналом потеряна (' + errText + ')');
@@ -306,7 +316,7 @@ function tick(t) {
     }
 
     var healTimes = saveHealTimes(t.key + '_healTimes', loadHealTimes(t.key + '_healTimes'));
-    dev[t.key + '-keepalive/heal_count'] = healTimes.length;
+    setCell(t, 'heal_count', healTimes.length);
     if (healTimes.length >= CFG.brakeCount) {
         dev[t.key + '-keepalive/enabled'] = false;
         setState(t, STATE.BRAKE, 'лечений за 6 ч: ' + healTimes.length +
