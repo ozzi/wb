@@ -181,10 +181,11 @@ cells.valid = { title: "Данные пригодны", type: "switch", value: f
 cells.status = { title: "Состояние", type: "text", value: "нет данных", readonly: true, order: order++ };
 cells.updated = { title: "Обновлено", type: "text", value: "—", readonly: true, order: order++ };
 
-// Побочные эффекты намеренно безусловные: в Duktape обёртка `if (typeof defineRule
-// === "function")` приводит к тому, что wb-rules на каждом тике валится с
-// «TypeError: call target not an object» (проверено на контроллере 22.11.2026).
-// Для тестов в Node глобалы defineVirtualDevice/defineRule/dev подставляются заглушками.
+// Побочные эффекты намеренно безусловные — как во всех остальных правилах репозитория.
+// «TypeError: call target not an object» на каждом тике давала не обёртка, а объектная
+// форма when: { cron: "..." } (см. комментарий у heat_loss_cron).
+// Для тестов в Node подставляются заглушки: global.dev, defineVirtualDevice,
+// defineRule и cron — полный набор, иначе require() падает до module.exports.
 defineVirtualDevice(DEV, { title: "Теплопотери по комнатам", cells: cells });
 
 // Ноль — законное показание (остывание дома до 0 °C — как раз тот случай, ради
@@ -272,6 +273,7 @@ defineRule("heat_loss_inputs", {
 
 // Периодика — только через cron(...): объект вида { cron: "..." } wb-rules
 // пытается вызвать как функцию и падает с «call target not an object» на каждом тике.
+// В Node-тестах cron тоже подменяется заглушкой: global.cron = function () { return function () {}; }.
 defineRule("heat_loss_cron", {
   when: cron("*/10 * * * *"),
   then: function () { recalc(); }
