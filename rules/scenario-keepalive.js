@@ -332,7 +332,7 @@ function confirmHeal(t, ruleEnabled) {
         var attempts = addAttempt(t);
         setCell(t, 'heal_count', attempts.length);
         delete pendingHeal[t.key];
-        log.warning(t.label + ': подтверждение лечения не дождалось, попытка забыта');
+        log.warning(t.label + ': подтверждение лечения не дождалось, попытка учтена в тормозе');
         return false;
     }
     delete pendingHeal[t.key];
