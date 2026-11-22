@@ -36,6 +36,14 @@ function allRooms(t) {
   for (var i = 0; i < model.ROOMS.length; i++) m[model.ROOMS[i].id] = t;
   return m;
 }
+// Только помещения, где датчик есть по проекту (hasSensor !== false).
+function sensorRooms(t) {
+  var m = {};
+  for (var i = 0; i < model.ROOMS.length; i++) {
+    if (model.ROOMS[i].hasSensor !== false) m[model.ROOMS[i].id] = t;
+  }
+  return m;
+}
 
 console.log("heat-loss.js: модель без контроллера");
 
@@ -107,6 +115,24 @@ check("частичные данные: отсутствующие комнат�
   var h = model.calcHouse(-15, { "gostinaya": 24 });
   assert.strictEqual(h.onProject, 14);
   close(h.perRoom["gostinaya"].total, model.roomLoss(model.ROOMS[7], 24, -15).total, 0.01);
+});
+
+check("valid: комнаты без датчика по проекту его не сбрасывают", function () {
+  var g = model.gaps(sensorRooms(22));
+  assert.strictEqual(g.missingSensors.length, 0);
+  assert.strictEqual(g.missing.length, 4);
+  ["Котельная", "Тамбур", "Антресоль", "Спальня 2э запад"].forEach(function (t) {
+    assert.ok(g.missing.indexOf(t) !== -1, "нет в списке без датчика: " + t);
+  });
+});
+
+check("valid: молчащий датчик в комнате с датчиком — не пригодно", function () {
+  var m = sensorRooms(22);
+  m["kuhnya"] = null;
+  var g = model.gaps(m);
+  assert.strictEqual(g.missingSensors.length, 1);
+  assert.strictEqual(g.missingSensors[0], "Кухня");
+  assert.strictEqual(g.missing.length, 5);
 });
 
 console.log(failures === 0 ? "\nвсе проверки пройдены" : "\nпровалено проверок: " + failures);

@@ -22,6 +22,10 @@
 //      «чем добрать». Мощность ТП в модели не участвует.
 //   8. Проектный расчёт при −27 °C убран: правило считает только по фактической уличной
 //      температуре, без второго числа «а если мороз».
+//   9. Четыре помещения без датчика по проекту (котельная, тамбур, антресоль, западная
+//      спальня 2э) помечены hasSensor: false. Они считаются по проектной температуре и
+//      попадают в rooms-on-project, но флаг «данные пригодны» не сбрасывают: без этой
+//      пометки valid не мог стать 1 никогда — ни один датчик в них не появится.
 //
 // Температуры комнат приходят из HA (Zigbee в ZHA, WB их не видит): HA пишет значения
 // в каналы t-* этого VD, правило читает их и считает потери. Отвалившийся или нулевой датчик
@@ -57,6 +61,7 @@ var R_CEIL = R_CEIL_SRC * 0.9;
 //  ko — надбавка на ориентацию фасада
 //  vent — доля приточного воздуха
 //  tProj — проектная температура; используется, когда датчик комнаты молчит
+//  hasSensor: false — датчика в помещении нет по проекту (в valid не входит)
 var ROOMS = [
   { id: "spalnya-1e-sever", title: "Спальня 1э север", floor: 1, a: 19.5584, kc: 1.05, ko: 1.10,
     aWall: 31.59, aWin: 2.8704, aFloorOut: 19.5584, floorToOut: false, aCeil: 0,
@@ -72,7 +77,7 @@ var ROOMS = [
 
   { id: "kotelnaya", title: "Котельная", floor: 1, a: 4.992, kc: 1.0, ko: 1.05,
     aWall: 7.965, aWin: 1.17, aFloorOut: 4.992, floorToOut: false, aCeil: 0,
-    vent: 0, tProj: 23 },
+    vent: 0, tProj: 23, hasSensor: false },
 
   { id: "holl-1e", title: "Холл 1э", floor: 1, a: 14.632, kc: 1.0, ko: 1.0,
     aWall: 0, aWin: 0, aFloorOut: 14.632, floorToOut: false, aCeil: 7.7876,
@@ -80,7 +85,7 @@ var ROOMS = [
 
   { id: "tambur", title: "Тамбур", floor: 1, a: 4.3164, kc: 1.0, ko: 1.05,
     aWall: 2.808, aWin: 2.08, aFloorOut: 4.3164, floorToOut: false, aCeil: 0,
-    vent: 0, tProj: 21 },
+    vent: 0, tProj: 21, hasSensor: false },
 
   { id: "kuhnya", title: "Кухня", floor: 1, a: 19.0464, kc: 1.05, ko: 1.05,
     aWall: 25.92, aWin: 5.7408, aFloorOut: 19.0464, floorToOut: false, aCeil: 0,
@@ -108,7 +113,7 @@ var ROOMS = [
 
   { id: "antresol", title: "Антресоль", floor: 2, a: 8.25, kc: 1.05, ko: 1.0,
     aWall: 5.25, aWin: 0, aFloorOut: 0, floorToOut: false, aCeil: 8.25,
-    vent: 0, tProj: 23 },
+    vent: 0, tProj: 23, hasSensor: false },
 
   { id: "spalnya-2e-vostok", title: "Спальня 2э восток", floor: 2, a: 20.0704, kc: 1.05, ko: 1.05,
     aWall: 32.048, aWin: 2.8704, aFloorOut: 5.2784, floorToOut: true, aCeil: 20.0704,
@@ -116,7 +121,7 @@ var ROOMS = [
 
   { id: "spalnya-2e-zapad", title: "Спальня 2э запад", floor: 2, a: 19.0464, kc: 1.05, ko: 1.05,
     aWall: 25.404, aWin: 4.324, aFloorOut: 0, floorToOut: false, aCeil: 19.0464,
-    vent: 0.1597, tProj: 23 }
+    vent: 0.1597, tProj: 23, hasSensor: false }
 ];
 
 // Теплопотери помещения, Вт
@@ -213,6 +218,23 @@ function readOutdoor() {
   return plausibleOut(t) ? t : null;
 }
 
+// Классификация входов. «Комната без данных» — не одно и то же: в четырёх помещениях
+// датчика нет по проекту (hasSensor: false), и они законно считаются по tProj.
+// valid отвечает на вопрос «все ли датчики на связи», поэтому такие помещения его
+// не сбрасывают, а rooms-on-project их по-прежнему считает.
+function gaps(tByRoom) {
+  var missing = [];
+  var missingSensors = [];
+  for (var i = 0; i < ROOMS.length; i++) {
+    var r = ROOMS[i];
+    var t = tByRoom ? tByRoom[r.id] : undefined;
+    if (t !== undefined && t !== null) continue;
+    missing.push(r.title);
+    if (r.hasSensor !== false) missingSensors.push(r.title);
+  }
+  return { missing: missing, missingSensors: missingSensors };
+}
+
 // Миграция входов при загрузке правила. Значения каналов VD персистятся в MQTT и при
 // переопределении устройства не сбрасываются: на контроллере, где работала прежняя
 // версия, в t-* остался её стартовый 0, а теперь 0 — законное показание.
@@ -236,13 +258,11 @@ function recalc() {
   }
 
   var tByRoom = {};
-  var missing = [];
   for (var i = 0; i < ROOMS.length; i++) {
-    var r = ROOMS[i];
-    var t = dev[DEV + "/t-" + r.id];
-    if (plausibleT(t)) tByRoom[r.id] = t;
-    else missing.push(r.title);
+    var t = dev[DEV + "/t-" + ROOMS[i].id];
+    if (plausibleT(t)) tByRoom[ROOMS[i].id] = t;
   }
+  var g = gaps(tByRoom);
 
   var h = calcHouse(tOut, tByRoom);
   for (var k = 0; k < ROOMS.length; k++) {
@@ -259,11 +279,15 @@ function recalc() {
   put("vent-w", Math.round(h.vent));
   put("floor-w", Math.round(h.floorLoss));
   put("ceil-w", Math.round(h.ceil));
-  put("rooms-on-project", missing.length);
-  put("valid", missing.length === 0);
-  put("status", missing.length === 0
-      ? "все датчики на связи"
-      : "без датчика: " + missing.length + " из " + ROOMS.length);
+  put("rooms-on-project", g.missing.length);
+  put("valid", g.missingSensors.length === 0);
+  if (g.missingSensors.length > 0) {
+    put("status", "нет данных: " + g.missingSensors.join(", "));
+  } else if (g.missing.length > 0) {
+    put("status", "без датчика по проекту: " + g.missing.length + " из " + ROOMS.length);
+  } else {
+    put("status", "все датчики на связи");
+  }
   put("updated", stamp());
 }
 
@@ -289,7 +313,7 @@ resetStaleZeros();
 recalc();
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { ROOMS: ROOMS, calcHouse: calcHouse, roomLoss: roomLoss,
+  module.exports = { ROOMS: ROOMS, calcHouse: calcHouse, roomLoss: roomLoss, gaps: gaps,
                      AREA_HOUSE: AREA_HOUSE, L_VENT: L_VENT,
                      R_WALL: R_WALL, R_CEIL: R_CEIL, R_FLOOR: R_FLOOR };
 }
