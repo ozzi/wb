@@ -506,3 +506,15 @@ setInterval(tickAll, CFG.tickMs);
 
 // Первый тик — только после startupGraceMs: к этому моменту wb-rules уже
 // получил retained-значения MQTT, и пустые топики не выглядят аварией.
+
+// Хуки для Node-тестов: на контроллере module нет, правило работает как обычно.
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        CFG: CFG,
+        STATE: STATE,
+        targets: CFG.targets,
+        tickAll: tickAll,
+        tick: tick,
+        isCritical: isCritical
+    };
+}
