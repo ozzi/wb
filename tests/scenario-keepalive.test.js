@@ -135,6 +135,8 @@ check("авария: самоотключение -> ожидание -> леч�
   e.tick();
   assert.strictEqual(e.store["office_autoOff"], "1", "самоотключение запомнено");
   assert.strictEqual(alert(e), 1, "тревога «сценарий выключен»");
+  assert.ok(e.logs.join("\n").indexOf("считаю самоотключением") !== -1,
+    "неоднозначный случай отмечен в логе");
 
   e.dev[OFFICE_ERR] = "";
   e.tick();
@@ -312,6 +314,46 @@ check("самоотключение в период прогрева тоже з
   assert.strictEqual(e.dev[OFFICE_ENABLED], true);
   e.tick();
   assert.strictEqual(state(e), S.HEALED);
+});
+
+check("зависшее подтверждение лечения забывается", function () {
+  var e = makeEnv();
+  e.advance(61000);
+  e.dev[OFFICE_ERR] = "r";
+  e.tick();
+  e.dev[OFFICE_ENABLED] = false;
+  e.tick();
+  e.dev[OFFICE_ERR] = "";
+  e.advance(6 * 60000);
+  e.tick();   // попытка включить, pending создан
+
+  // Подтверждение не пришло: сценарий снова выключен, а тик случился поздно.
+  e.dev[OFFICE_ENABLED] = false;
+  e.advance(4 * 60000);
+  e.tick();
+  assert.ok(e.logs.join("\n").indexOf("подтверждение лечения не дождалось") !== -1,
+    "просроченная попытка отброшена с предупреждением");
+  assert.notStrictEqual(state(e), S.HEAL_FAILED, "ложного HEAL_FAILED нет");
+});
+
+check("тексты тормоза собираются из CFG", function () {
+  var e = makeEnv();
+  e.rule.CFG.brakeCount = 3;
+  e.rule.CFG.brakeWindowMs = 2 * 3600000;
+  e.advance(61000);
+  e.dev[OFFICE_ENABLED] = false;
+  e.store["office_autoOff"] = "1";
+  e.store["office_lastErrorAt"] = e.now() - 10 * 60000;
+  e.store["office_healTimes"] = JSON.stringify([1, 2, 3].map(function () {
+    return e.now();
+  }));
+
+  e.tick();
+  assert.strictEqual(state(e), S.BRAKE);
+  assert.ok(e.dev["office-keepalive/reason"].indexOf("лечений за 2 ч: 3") !== -1,
+    "причина берёт окно из CFG");
+  assert.ok(e.dev["office-keepalive/alert_text"].indexOf("3 лечений за 2 ч") !== -1,
+    "тревога берёт порог и окно из CFG");
 });
 
 check("isCritical: любой непустой код — авария, незнакомый пишется один раз", function () {

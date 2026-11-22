@@ -18,8 +18,12 @@
 //     ручным и не вмешиваюсь, сколько бы времени ни прошло;
 //   - сценарий выключился сам из-за ошибки канала (маркер самоотключения) ->
 //     ждём стабилизации 5 мин, затем включаем и перечитываем топик;
-//   - 5 лечений за 6 часов -> сторож выключает сам себя и требует человека;
-//     ручное включение переключателя сбрасывает счётчик.
+//   - ручное выключение при живой ошибке канала неотличимо от защиты
+//     wb-scenarios: такой сценарий сторож тоже вернёт после стабилизации
+//     (в лог пишется предупреждение);
+//   - 5 лечений за 6 часов (CFG.brakeCount / CFG.brakeWindowMs) -> сторож
+//     выключает сам себя и требует человека; ручное включение переключателя
+//     сбрасывает счётчик.
 //
 // Чтобы выключить сценарий надолго, выключите переключатель «Сторож включён»:
 // иначе сторож вернёт сценарий в работу после аварии.
@@ -246,7 +250,7 @@ function makeVd(t) {
                 readonly: true
             },
             heal_count: {
-                title: 'Лечений за 6 часов',
+                title: 'Лечений за ' + Math.round(CFG.brakeWindowMs / 3600000) + ' ч',
                 type: 'value',
                 value: 0,
                 readonly: true
@@ -308,13 +312,23 @@ function addAttempt(t) {
 // Виртуальное устройство применяет запись сразу, поэтому уже событие на
 // rule_enabled вызовет tick() и закроет попытку; при ошибке — следующий тик.
 function heal(t) {
-    dev[t.vd + '/rule_enabled'] = true;
+    // Сначала pending, потом запись: событие на rule_enabled может прийти
+    // синхронно, и confirmHeal обязан найти ожидаемую попытку.
     pendingHeal[t.key] = Date.now();
+    dev[t.vd + '/rule_enabled'] = true;
 }
 
 function confirmHeal(t, ruleEnabled) {
     var at = pendingHeal[t.key];
     if (!at) {
+        return false;
+    }
+    // Попытка не живёт дольше нескольких тиков: если между записью и
+    // подтверждением тик ушёл в ранний return (NO_CONFIG, выключенный сторож),
+    // зависшая попытка позже соврёт про HEALED/HEAL_FAILED.
+    if (Date.now() - at > 3 * CFG.tickMs) {
+        delete pendingHeal[t.key];
+        log.warning(t.label + ': подтверждение лечения не дождалось, попытка забыта');
         return false;
     }
     delete pendingHeal[t.key];
@@ -358,6 +372,10 @@ function trackScenario(t, ruleEnabled, errText) {
     // лучше вернуть сценарий, чем повторить исходный инцидент.
     if (errText !== '' && prev !== '0') {
         store[t.key + '_autoOff'] = '1';
+        // Ручное выключение при живой ошибке неотличимо от защиты wb-scenarios.
+        // Пишем в лог, чтобы возврат сценария можно было объяснить задним числом.
+        log.warning(t.label + ': сценарий выключен при активной ошибке канала — ' +
+            'считаю самоотключением и верну его после стабилизации');
     }
     if (prev !== '0') {
         store[t.key + '_ruleWasEnabled'] = '0';
@@ -462,13 +480,15 @@ function tick(t) {
     var healTimes = saveHealTimes(t.key + '_healTimes', loadHealTimes(t.key + '_healTimes'));
     setCell(t, 'heal_count', healTimes.length);
     if (healTimes.length >= CFG.brakeCount) {
+        var windowH = Math.round(CFG.brakeWindowMs / 3600000);
         // Сначала состояние и тревога, потом переключатель: запись в enabled
         // сама вызывает tick(), и он не должен затереть BRAKE.
-        setState(t, STATE.BRAKE, 'лечений за 6 ч: ' + healTimes.length +
+        setState(t, STATE.BRAKE, 'лечений за ' + windowH + ' ч: ' + healTimes.length +
             ' — сторож остановлен, нужен человек',
-            4, t.label + ': связь сыпется постоянно, сторож остановлен (5 лечений за 6 ч)');
+            4, t.label + ': связь сыпется постоянно, сторож остановлен (' +
+                CFG.brakeCount + ' лечений за ' + windowH + ' ч)');
         dev[enabledTopic] = false;
-        log.error(t.label + ': тормоз, лечений за 6 ч: ' + healTimes.length);
+        log.error(t.label + ': тормоз, лечений за ' + windowH + ' ч: ' + healTimes.length);
         return;
     }
 
