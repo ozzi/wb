@@ -6,14 +6,23 @@
 // Keenetic в офисе перезагружался, шина Modbus упала, сценарий офиса отключился
 // и остался выключенным на трое суток при 7 °C в помещении.
 //
-// Сторож возвращает сценарий в работу, когда связь восстановилась, и НИКОГДА
-// не спорит с ручным выключением:
-//   - критическая ошибка канала сейчас  -> запоминаем время, ждём;
-//   - сценарий включён                  -> всё в порядке;
-//   - сценарий выключен, ошибок не было дольше 30 мин -> это руками, не трогаем;
-//   - сценарий выключен, с последней ошибки прошло < 5 мин -> ждём стабилизации;
-//   - прошло >= 5 мин -> включаем и перечитываем топик;
-//   - 5 лечений за 6 часов -> сторож выключает сам себя и требует человека.
+// Движок wb-rules — ECMAScript 5.1 (`let`/`const` и стрелочные функции не
+// поддерживаются), поэтому здесь var и function. Это осознанно, а не устаревший
+// стиль: см. README wb-rules и AGENTS.md проекта.
+//
+// Сторож возвращает сценарий в работу, когда связь восстановилась, и не
+// трогает сценарий, который выключили руками:
+//   - критическая ошибка канала сейчас -> запоминаем время, ждём;
+//   - сценарий включён                 -> всё в порядке;
+//   - сценарий выключен, но сторож не видел аварийного выключения -> считаю
+//     ручным и не вмешиваюсь, сколько бы времени ни прошло;
+//   - сценарий выключился сам из-за ошибки канала (маркер самоотключения) ->
+//     ждём стабилизации 5 мин, затем включаем и перечитываем топик;
+//   - 5 лечений за 6 часов -> сторож выключает сам себя и требует человека;
+//     ручное включение переключателя сбрасывает счётчик.
+//
+// Чтобы выключить сценарий надолго, выключите переключатель «Сторож включён»:
+// иначе сторож вернёт сценарий в работу после аварии.
 //
 // Курятник: у него днём сценарий выключает штатное правило
 // kuryatnik-termo-dayoff.js (дверь открыта). Пока heating_allowed = 0,
@@ -26,15 +35,16 @@
 //   2 — сценарий вылечен (включён обратно)
 //   3 — включить не удалось (контрол не принял запись)
 //   4 — тормоз: слишком частые аварии, нужен человек
+//   5 — не найдены топики сценария/канала: неверные имена устройств
 //
 // Время в VD — местное (Самара, UTC+4), как в остальных домашних правилах.
 
 var CFG = {
     tickMs: 60 * 1000,
-    manualWindowMs: 30 * 60 * 1000,
     healDelayMs: 5 * 60 * 1000,
     brakeWindowMs: 6 * 60 * 60 * 1000,
     brakeCount: 5,
+    startupGraceMs: 60 * 1000,
     tzOffsetMin: 240,
     targets: [
         {
@@ -67,10 +77,13 @@ var STATE = {
     HEAL_FAILED: 5,
     BRAKE: 6,
     DISABLED: 7,
-    SUPPRESSED: 8
+    SUPPRESSED: 8,
+    NO_CONFIG: 9
 };
 
 var store = new PersistentStorage('thermostat-keepalive', { global: true });
+var startedAt = Date.now();
+var pendingHeal = {};   // key -> время попытки включения, ждёт подтверждения
 
 // ---------- вспомогательное ----------
 
@@ -87,11 +100,41 @@ function fmtTime(ms) {
         d.getUTCFullYear() + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes());
 }
 
+// Драйверы WB отдают в '#error' ровно код ошибки: 'r' (чтение), 'w' (запись)
+// или 'rw'. Свободного текста там не бывает, поэтому сравниваем точно:
+// подстрочный поиск ловил бы 'r' в любом слове.
 function isCritical(errVal) {
-    if (typeof errVal !== 'string') {
+    return errVal === 'r' || errVal === 'w' || errVal === 'rw';
+}
+
+// Проверка существования контрола: при переименовании устройства dev[...]
+// молча вернёт null, и сторож завис бы без единой записи в лог.
+function controlExists(topic) {
+    var slash = topic.indexOf('/');
+    if (slash === -1) {
         return false;
     }
-    return errVal.indexOf('r') !== -1 || errVal.indexOf('w') !== -1;
+    var device = getDevice(topic.substr(0, slash));
+    return !!device && device.isControlExists(topic.substr(slash + 1));
+}
+
+function missingTopics(t) {
+    var topics = [
+        t.vd + '/rule_enabled',
+        t.sensor,
+        t.actuator,
+        t.key + '-keepalive/enabled'
+    ];
+    if (t.inhibit) {
+        topics.push(t.inhibit);
+    }
+    var missing = [];
+    for (var i = 0; i < topics.length; i++) {
+        if (!controlExists(topics[i])) {
+            missing.push(topics[i]);
+        }
+    }
+    return missing;
 }
 
 function loadNum(key) {
@@ -150,7 +193,8 @@ function makeVd(t) {
                     5: 'Не удалось включить',
                     6: 'Тормоз',
                     7: 'Сторож выключен',
-                    8: 'Подавлен штатным режимом'
+                    8: 'Подавлен штатным режимом',
+                    9: 'Не найдены топики'
                 }
             },
             alert_code: {
@@ -163,7 +207,8 @@ function makeVd(t) {
                     1: 'Сценарий выключен, жду',
                     2: 'Сценарий вылечен',
                     3: 'Не удалось включить',
-                    4: 'Тормоз: частые аварии'
+                    4: 'Тормоз: частые аварии',
+                    5: 'Не найдены топики сценария'
                 }
             },
             alert_text: {
@@ -240,75 +285,161 @@ function channelError(t) {
     return parts.join(', ');
 }
 
+// Любая попытка включения (удачная и нет) расходует ресурс тормоза: иначе при
+// устойчиво не принимающейся записи сторож лечил бы по кругу каждую минуту.
+function addAttempt(t) {
+    var key = t.key + '_healTimes';
+    var list = loadHealTimes(key);
+    list.push(Date.now());
+    return saveHealTimes(key, list);
+}
+
+// Попытка не подтверждается таймером: результат проверяем на следующем тике.
+// Виртуальное устройство применяет запись сразу, поэтому уже событие на
+// rule_enabled вызовет tick() и закроет попытку; при ошибке — следующий тик.
 function heal(t) {
     dev[t.vd + '/rule_enabled'] = true;
-    setTimeout(function () {
-        var now = Date.now();
-        var key = t.key + '_healTimes';
-        if (dev[t.vd + '/rule_enabled'] === true) {
-            var list = loadHealTimes(key);
-            list.push(now);
-            list = saveHealTimes(key, list);
-            setCell(t, 'last_heal', fmtTime(now));
-            setCell(t, 'heal_count', list.length);
-            setState(t, STATE.HEALED, 'связь восстановилась, сценарий включён',
-                2, t.label + ': сценарий включён обратно, связь восстановилась');
-            log.info(t.label + ': сценарий вылечен, лечений за 6 ч: ' + list.length);
-        } else {
-            setState(t, STATE.HEAL_FAILED,
-                'запись rule_enabled не применилась — проверить readonly/связь',
-                3, t.label + ': не смог вернуть сценарий, нужно посмотреть руками');
-            log.error(t.label + ': не удалось включить сценарий (запись не применилась)');
+    pendingHeal[t.key] = Date.now();
+}
+
+function confirmHeal(t, ruleEnabled) {
+    var at = pendingHeal[t.key];
+    if (!at) {
+        return false;
+    }
+    delete pendingHeal[t.key];
+    var list = addAttempt(t);
+    setCell(t, 'heal_count', list.length);
+    if (ruleEnabled === true) {
+        setCell(t, 'last_heal', fmtTime(at));
+        setState(t, STATE.HEALED, 'связь восстановилась, сценарий включён',
+            2, t.label + ': сценарий включён обратно, связь восстановилась');
+        log.info(t.label + ': сценарий вылечен, лечений за 6 ч: ' + list.length);
+    } else {
+        setCell(t, 'last_heal', fmtTime(at) + ' — запись не применилась');
+        setState(t, STATE.HEAL_FAILED,
+            'запись rule_enabled не применилась — проверить readonly/связь',
+            3, t.label + ': не смог вернуть сценарий, нужно посмотреть руками');
+        log.error(t.label + ': не удалось включить сценарий (запись не применилась)');
+    }
+    return true;
+}
+
+// Какой сценарий выключился сам, а какой выключили руками. Маркер ставим только
+// если сценарий до этого работал, а выключение совпало с живой ошибкой канала.
+// Выключение без ошибки (или ошибка, пришедшая уже после ручного выключения)
+// маркер не ставит. Маркер живёт до включения сценария, поэтому дневное окно
+// курятника его не «съедает» по возрасту.
+function trackScenario(t, ruleEnabled, errText) {
+    var prev = store[t.key + '_ruleWasEnabled'];
+    if (ruleEnabled === true) {
+        if (store[t.key + '_autoOff'] === '1') {
+            store[t.key + '_autoOff'] = '0';
         }
-    }, 3000);
+        if (prev !== '1') {
+            store[t.key + '_ruleWasEnabled'] = '1';
+        }
+        return;
+    }
+    if (ruleEnabled !== false) {
+        return;
+    }
+    // Истории ещё нет (первый запуск после установки) — считаем аварией:
+    // лучше вернуть сценарий, чем повторить исходный инцидент.
+    if (errText !== '' && prev !== '0') {
+        store[t.key + '_autoOff'] = '1';
+    }
+    if (prev !== '0') {
+        store[t.key + '_ruleWasEnabled'] = '0';
+    }
 }
 
 function tick(t) {
-    var key = t.key + '_lastErrorAt';
-    var errText = channelError(t);
     var now = Date.now();
+    var stateTopic = t.key + '-keepalive/state';
+    var enabledTopic = t.key + '-keepalive/enabled';
 
-    if (dev[t.key + '-keepalive/enabled'] === false) {
-        setState(t, STATE.DISABLED, 'сторож выключен переключателем', 0, '');
+    // wb-rules получает retained-значения не мгновенно: первые секунды после
+    // старта пустой dev[...] выглядит как «сценарий выключен» и мог бы
+    // запустить лишнее лечение.
+    if (now - startedAt < CFG.startupGraceMs) {
         return;
     }
 
+    var ruleEnabled = dev[t.vd + '/rule_enabled'];
+    var errText = channelError(t);
+    var missing = missingTopics(t);
+    if (missing.length > 0 || ruleEnabled === null || ruleEnabled === undefined) {
+        if (missing.indexOf(t.vd + '/rule_enabled') === -1 &&
+                (ruleEnabled === null || ruleEnabled === undefined)) {
+            missing.push(t.vd + '/rule_enabled (нет значения)');
+        }
+        if (dev[stateTopic] !== STATE.NO_CONFIG) {
+            log.error(t.label + ': сторож не может работать, не найдены топики: ' +
+                missing.join(', ') + ' — проверьте имена устройств сценария');
+        }
+        setState(t, STATE.NO_CONFIG, 'не найдены топики: ' + missing.join(', '),
+            5, t.label + ': не найдены топики сценария/канала, сторож не работает');
+        return;
+    }
+
+    if (confirmHeal(t, ruleEnabled)) {
+        return;
+    }
+
+    if (dev[enabledTopic] === false) {
+        // Тормоз выключает сторож сам: его состояние и тревогу не затираем.
+        if (dev[stateTopic] !== STATE.BRAKE) {
+            setState(t, STATE.DISABLED, 'сторож выключен переключателем', 0, '');
+        }
+        return;
+    }
+
+    if (dev[stateTopic] === STATE.BRAKE) {
+        // Человек включил сторож после тормоза — это и есть сброс счётчика.
+        store[t.key + '_healTimes'] = '[]';
+        setCell(t, 'heal_count', 0);
+        log.info(t.label + ': тормоз сброшен вручную, счётчик лечений обнулён');
+    }
+
+    // Подавление проверяем раньше ошибок: днём курятником владеет
+    // kuryatnik-termo-dayoff.js, и ложные пуши про потерянную связь не нужны.
+    if (t.inhibit && dev[t.inhibit] === false) {
+        setState(t, STATE.SUPPRESSED, 'штатный режим (день, нагрев запрещён)', 0, '');
+        return;
+    }
+
+    trackScenario(t, ruleEnabled, errText);
+
     if (errText !== '') {
-        store[key] = now;
+        store[t.key + '_lastErrorAt'] = now;
         setCell(t, 'last_error', fmtTime(now) + ' — ' + errText);
-        if (dev[t.vd + '/rule_enabled'] === false) {
-            setState(t, STATE.CHANNEL_ERROR, 'канал в критической ошибке, сценарий уже выключен',
+        if (ruleEnabled === false && store[t.key + '_autoOff'] === '1') {
+            setState(t, STATE.CHANNEL_ERROR,
+                'канал в критической ошибке, сценарий выключен из-за неё',
                 1, t.label + ': сценарий выключен, связь с каналом потеряна (' + errText + ')');
+        } else if (ruleEnabled === false) {
+            setState(t, STATE.CHANNEL_ERROR,
+                'канал в критической ошибке, сценарий выключен вручную', 0, '');
         } else {
             setState(t, STATE.CHANNEL_ERROR, 'канал в критической ошибке, жду', 0, '');
         }
         return;
     }
 
-    if (t.inhibit && dev[t.inhibit] === false) {
-        setState(t, STATE.SUPPRESSED, 'штатный режим (день, нагрев запрещён)', 0, '');
-        return;
-    }
-
-    if (dev[t.vd + '/rule_enabled'] === true) {
+    if (ruleEnabled === true) {
         setState(t, STATE.OK, 'сценарий работает', 0, '');
         return;
     }
 
-    var lastErrorAt = loadNum(key);
-    if (!lastErrorAt) {
-        setState(t, STATE.MANUAL, 'выключен без ошибок канала — считаю ручным', 0, '');
+    if (store[t.key + '_autoOff'] !== '1') {
+        setState(t, STATE.MANUAL,
+            'выключен без аварийного самоотключения — считаю ручным', 0, '');
         return;
     }
 
-    var age = now - lastErrorAt;
-    if (age > CFG.manualWindowMs) {
-        setState(t, STATE.MANUAL, 'выключен ' + fmtTime(lastErrorAt) +
-            ', ошибок нет дольше 30 мин — считаю ручным', 0, '');
-        return;
-    }
-
-    if (age < CFG.healDelayMs) {
+    var lastErrorAt = loadNum(t.key + '_lastErrorAt');
+    if (lastErrorAt && now - lastErrorAt < CFG.healDelayMs) {
         setState(t, STATE.WAITING_STABLE, 'сценарий выключен ' + fmtTime(lastErrorAt) +
             ', жду стабилизации до ' + fmtTime(lastErrorAt + CFG.healDelayMs),
             1, t.label + ': сценарий выключен после сбоя связи, слежу');
@@ -318,10 +449,12 @@ function tick(t) {
     var healTimes = saveHealTimes(t.key + '_healTimes', loadHealTimes(t.key + '_healTimes'));
     setCell(t, 'heal_count', healTimes.length);
     if (healTimes.length >= CFG.brakeCount) {
-        dev[t.key + '-keepalive/enabled'] = false;
+        // Сначала состояние и тревога, потом переключатель: запись в enabled
+        // сама вызывает tick(), и он не должен затереть BRAKE.
         setState(t, STATE.BRAKE, 'лечений за 6 ч: ' + healTimes.length +
             ' — сторож остановлен, нужен человек',
             4, t.label + ': связь сыпется постоянно, сторож остановлен (5 лечений за 6 ч)');
+        dev[enabledTopic] = false;
         log.error(t.label + ': тормоз, лечений за 6 ч: ' + healTimes.length);
         return;
     }
@@ -357,4 +490,6 @@ defineRule('thermostat-keepalive-events', {
 });
 
 setInterval(tickAll, CFG.tickMs);
-tickAll();
+
+// Первый тик — только после startupGraceMs: к этому моменту wb-rules уже
+// получил retained-значения MQTT, и пустые топики не выглядят аварией.
