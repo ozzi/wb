@@ -104,7 +104,7 @@ function fmtTime(ms) {
 // канал в порядке. Любой непустой код считаем критическим: если новый драйвер
 // сменит формат, авария не должна стать невидимой. Незнакомый код пишем в лог
 // один раз, чтобы смена формата была видна.
-var warnedErrorCodes = {};
+var warnedErrorCodes = Object.create(null);
 
 function isCritical(errVal) {
     if (errVal === undefined || errVal === null || errVal === '') {
