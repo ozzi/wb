@@ -36,6 +36,14 @@ function allRooms(t) {
   for (var i = 0; i < model.ROOMS.length; i++) m[model.ROOMS[i].id] = t;
   return m;
 }
+// Только помещения, где датчик есть по проекту (hasSensor !== false).
+function sensorRooms(t) {
+  var m = {};
+  for (var i = 0; i < model.ROOMS.length; i++) {
+    if (model.ROOMS[i].hasSensor !== false) m[model.ROOMS[i].id] = t;
+  }
+  return m;
+}
 
 console.log("heat-loss.js: модель без контроллера");
 
@@ -107,6 +115,29 @@ check("частичные данные: отсутствующие комнат�
   var h = model.calcHouse(-15, { "gostinaya": 24 });
   assert.strictEqual(h.onProject, 14);
   close(h.perRoom["gostinaya"].total, model.roomLoss(model.ROOMS[7], 24, -15).total, 0.01);
+});
+
+check("valid: комнаты без датчика по проекту его не сбрасывают", function () {
+  var p = sensorRooms(22);
+  assert.deepStrictEqual(model.missingSensors(p), []);
+  var h = model.calcHouse(6, p);
+  assert.strictEqual(h.onProject, 4);
+  close(h.perRoom["gostinaya"].total,
+        model.roomLoss(model.ROOMS[7], 22, 6).total, 0.01);
+});
+
+check("valid: молчащий датчик в комнате с датчиком — не пригодно", function () {
+  var p = sensorRooms(22);
+  p["kuhnya"] = null;
+  assert.deepStrictEqual(model.missingSensors(p), ["Кухня"]);
+  assert.strictEqual(model.calcHouse(6, p).onProject, 5);
+});
+
+check("valid: NaN и строка считаются отсутствием данных", function () {
+  var p = sensorRooms(22);
+  p["kuhnya"] = NaN;
+  p["holl-1e"] = "unavailable";
+  assert.deepStrictEqual(model.missingSensors(p).sort(), ["Кухня", "Холл 1э"]);
 });
 
 console.log(failures === 0 ? "\nвсе проверки пройдены" : "\nпровалено проверок: " + failures);
