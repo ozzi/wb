@@ -100,11 +100,21 @@ function fmtTime(ms) {
         d.getUTCFullYear() + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes());
 }
 
-// Драйверы WB отдают в '#error' ровно код ошибки: 'r' (чтение), 'w' (запись)
-// или 'rw'. Свободного текста там не бывает, поэтому сравниваем точно:
-// подстрочный поиск ловил бы 'r' в любом слове.
+// '#error' по конвенции заполняется только при ошибке: пусто или отсутствует —
+// канал в порядке. Любой непустой код считаем критическим: если новый драйвер
+// сменит формат, авария не должна стать невидимой. Незнакомый код пишем в лог
+// один раз, чтобы смена формата была видна.
+var warnedErrorCodes = {};
+
 function isCritical(errVal) {
-    return errVal === 'r' || errVal === 'w' || errVal === 'rw';
+    if (errVal === undefined || errVal === null || errVal === '') {
+        return false;
+    }
+    if (errVal !== 'r' && errVal !== 'w' && errVal !== 'rw' && !warnedErrorCodes[errVal]) {
+        warnedErrorCodes[errVal] = true;
+        log.warning('неизвестный код ошибки канала: ' + errVal);
+    }
+    return true;
 }
 
 // Проверка существования контрола: при переименовании устройства dev[...]
@@ -358,16 +368,27 @@ function tick(t) {
     var now = Date.now();
     var stateTopic = t.key + '-keepalive/state';
     var enabledTopic = t.key + '-keepalive/enabled';
+    var ruleEnabled = dev[t.vd + '/rule_enabled'];
+    var errText = channelError(t);
 
     // wb-rules получает retained-значения не мгновенно: первые секунды после
-    // старта пустой dev[...] выглядит как «сценарий выключен» и мог бы
-    // запустить лишнее лечение.
+    // старта решения не принимаем. Самоотключение при этом всё равно
+    // запоминаем — wb-scenarios может выключить сценарий уже в этом окне.
     if (now - startedAt < CFG.startupGraceMs) {
+        trackScenario(t, ruleEnabled, errText);
         return;
     }
 
-    var ruleEnabled = dev[t.vd + '/rule_enabled'];
-    var errText = channelError(t);
+    // Выключатель проверяем раньше диагностики топиков: выключенный сторож
+    // не должен поднимать тревогу NO_CONFIG и затирать состояние BRAKE.
+    if (dev[enabledTopic] === false) {
+        // Тормоз выключает сторож сам: его состояние и тревогу не затираем.
+        if (dev[stateTopic] !== STATE.BRAKE) {
+            setState(t, STATE.DISABLED, 'сторож выключен переключателем', 0, '');
+        }
+        return;
+    }
+
     var missing = missingTopics(t);
     if (missing.length > 0 || ruleEnabled === null || ruleEnabled === undefined) {
         if (missing.indexOf(t.vd + '/rule_enabled') === -1 &&
@@ -384,14 +405,6 @@ function tick(t) {
     }
 
     if (confirmHeal(t, ruleEnabled)) {
-        return;
-    }
-
-    if (dev[enabledTopic] === false) {
-        // Тормоз выключает сторож сам: его состояние и тревогу не затираем.
-        if (dev[stateTopic] !== STATE.BRAKE) {
-            setState(t, STATE.DISABLED, 'сторож выключен переключателем', 0, '');
-        }
         return;
     }
 
