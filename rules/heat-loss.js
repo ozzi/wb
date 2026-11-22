@@ -139,14 +139,16 @@ function roomLoss(room, tIn, tOut) {
            wall: wall, win: win, floor: floor, ceil: ceil, vent: vent };
 }
 
-// Сводка. tByRoom — {id: температура}; отсутствующие берутся проектные.
+// Сводка. tByRoom — {id: температура}; отсутствующие и неправдоподобные берутся
+// проектные. Предикат тот же plausibleT, что и в recalc(): «нет данных» в модели и
+// «комната на проектной» в channels считаются одинаково, одним источником истины.
 function calcHouse(tOut, tByRoom) {
   var f1 = 0, f2 = 0, wall = 0, win = 0, floor = 0, ceil = 0, vent = 0, onProject = 0;
   var perRoom = {};
   for (var i = 0; i < ROOMS.length; i++) {
     var r = ROOMS[i];
     var t = r.tProj;
-    if (tByRoom && tByRoom[r.id] !== undefined && tByRoom[r.id] !== null) t = tByRoom[r.id];
+    if (tByRoom && plausibleT(tByRoom[r.id])) t = tByRoom[r.id];
     else onProject++;
     var l = roomLoss(r, t, tOut);
     perRoom[r.id] = l;
@@ -218,21 +220,20 @@ function readOutdoor() {
   return plausibleOut(t) ? t : null;
 }
 
-// Классификация входов. «Комната без данных» — не одно и то же: в четырёх помещениях
-// датчика нет по проекту (hasSensor: false), и они законно считаются по tProj.
-// valid отвечает на вопрос «все ли датчики на связи», поэтому такие помещения его
-// не сбрасывают, а rooms-on-project их по-прежнему считает.
-function gaps(tByRoom) {
-  var missing = [];
-  var missingSensors = [];
+// Молчащие датчики: помещения, где датчик есть по проекту, а показания нет.
+// В четырёх помещениях датчика нет вовсе (hasSensor: false) — они законно считаются
+// по tProj, попадают в rooms-on-project, но флаг valid не сбрасывают: иначе он не
+// станет 1 никогда.
+// Контракт самодостаточен: значение проверяется тем же plausibleT, что и модель,
+// поэтому вызов с сырыми dev-значениями (NaN, строка) не даст ложного «датчик есть».
+function missingSensors(tByRoom) {
+  var out = [];
   for (var i = 0; i < ROOMS.length; i++) {
     var r = ROOMS[i];
-    var t = tByRoom ? tByRoom[r.id] : undefined;
-    if (t !== undefined && t !== null) continue;
-    missing.push(r.title);
-    if (r.hasSensor !== false) missingSensors.push(r.title);
+    if (plausibleT(tByRoom ? tByRoom[r.id] : undefined)) continue;
+    if (r.hasSensor !== false) out.push(r.title);
   }
-  return { missing: missing, missingSensors: missingSensors };
+  return out;
 }
 
 // Миграция входов при загрузке правила. Значения каналов VD персистятся в MQTT и при
@@ -262,7 +263,7 @@ function recalc() {
     var t = dev[DEV + "/t-" + ROOMS[i].id];
     if (plausibleT(t)) tByRoom[ROOMS[i].id] = t;
   }
-  var g = gaps(tByRoom);
+  var dead = missingSensors(tByRoom);
 
   var h = calcHouse(tOut, tByRoom);
   for (var k = 0; k < ROOMS.length; k++) {
@@ -279,12 +280,12 @@ function recalc() {
   put("vent-w", Math.round(h.vent));
   put("floor-w", Math.round(h.floorLoss));
   put("ceil-w", Math.round(h.ceil));
-  put("rooms-on-project", g.missing.length);
-  put("valid", g.missingSensors.length === 0);
-  if (g.missingSensors.length > 0) {
-    put("status", "нет данных: " + g.missingSensors.join(", "));
-  } else if (g.missing.length > 0) {
-    put("status", "без датчика по проекту: " + g.missing.length + " из " + ROOMS.length);
+  put("rooms-on-project", h.onProject);
+  put("valid", dead.length === 0);
+  if (dead.length > 0) {
+    put("status", "нет данных: " + dead.join(", "));
+  } else if (h.onProject > 0) {
+    put("status", "без датчика по проекту: " + h.onProject + " из " + ROOMS.length);
   } else {
     put("status", "все датчики на связи");
   }
@@ -313,7 +314,8 @@ resetStaleZeros();
 recalc();
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { ROOMS: ROOMS, calcHouse: calcHouse, roomLoss: roomLoss, gaps: gaps,
+  module.exports = { ROOMS: ROOMS, calcHouse: calcHouse, roomLoss: roomLoss,
+                     missingSensors: missingSensors,
                      AREA_HOUSE: AREA_HOUSE, L_VENT: L_VENT,
                      R_WALL: R_WALL, R_CEIL: R_CEIL, R_FLOOR: R_FLOOR };
 }
