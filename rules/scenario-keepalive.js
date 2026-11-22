@@ -329,8 +329,8 @@ function confirmHeal(t, ruleEnabled) {
     if (Date.now() - at > 3 * CFG.tickMs) {
         // Попытка была сделана (запись ушла), поэтому она так же расходует
         // ресурс тормоза — просто подтверждение потерялось.
-        var forgotten = addAttempt(t);
-        setCell(t, 'heal_count', forgotten.length);
+        var attempts = addAttempt(t);
+        setCell(t, 'heal_count', attempts.length);
         delete pendingHeal[t.key];
         log.warning(t.label + ': подтверждение лечения не дождалось, попытка забыта');
         return false;
