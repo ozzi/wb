@@ -307,9 +307,14 @@ check("самоотключение в период прогрева тоже з
   e.dev[OFFICE_ENABLED] = false;
   e.tick();
   assert.strictEqual(e.store["office_autoOff"], "1", "маркер поставлен до первого решения");
+  assert.ok(e.store["office_lastErrorAt"] > 0, "время ошибки запомнено в прогреве");
 
   e.dev[OFFICE_ERR] = "";
   e.advance(60000);
+  e.tick();
+  assert.strictEqual(state(e), S.WAITING_STABLE, "5 минут стабилизации соблюдены");
+
+  e.advance(5 * 60000);
   e.tick();   // лечение
   assert.strictEqual(e.dev[OFFICE_ENABLED], true);
   e.tick();
@@ -334,6 +339,9 @@ check("зависшее подтверждение лечения забывае
   assert.ok(e.logs.join("\n").indexOf("подтверждение лечения не дождалось") !== -1,
     "просроченная попытка отброшена с предупреждением");
   assert.notStrictEqual(state(e), S.HEAL_FAILED, "ложного HEAL_FAILED нет");
+  assert.strictEqual(JSON.parse(e.store["office_healTimes"]).length, 1,
+    "забытая попытка тоже расходует тормоз");
+  assert.strictEqual(e.dev["office-keepalive/heal_count"], 1);
 });
 
 check("тексты тормоза собираются из CFG", function () {

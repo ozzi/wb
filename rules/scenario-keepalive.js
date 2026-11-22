@@ -327,6 +327,10 @@ function confirmHeal(t, ruleEnabled) {
     // подтверждением тик ушёл в ранний return (NO_CONFIG, выключенный сторож),
     // зависшая попытка позже соврёт про HEALED/HEAL_FAILED.
     if (Date.now() - at > 3 * CFG.tickMs) {
+        // Попытка была сделана (запись ушла), поэтому она так же расходует
+        // ресурс тормоза — просто подтверждение потерялось.
+        var forgotten = addAttempt(t);
+        setCell(t, 'heal_count', forgotten.length);
         delete pendingHeal[t.key];
         log.warning(t.label + ': подтверждение лечения не дождалось, попытка забыта');
         return false;
@@ -394,6 +398,11 @@ function tick(t) {
     // запоминаем — wb-scenarios может выключить сценарий уже в этом окне.
     if (now - startedAt < CFG.startupGraceMs) {
         trackScenario(t, ruleEnabled, errText);
+        if (errText !== '') {
+            // Время ошибки нужно и для 5-минутной стабилизации: иначе ошибка,
+            // ушедшая до первого полного тика, даст лечение без выдержки.
+            store[t.key + '_lastErrorAt'] = now;
+        }
         return;
     }
 
