@@ -43,6 +43,12 @@ var REG_TYPES = ['holding', 'holding_single', 'holding_multi', 'input', 'coil', 
 var MAX_READ_REGISTERS = 125;
 var DEFAULT_MAX_READ = 1;
 
+function effectiveMaxRead(value) {
+    if (value === undefined || value === null) return DEFAULT_MAX_READ;
+    if (value === 0 || value > MAX_READ_REGISTERS) return MAX_READ_REGISTERS;
+    return value;
+}
+
 // word_order разбирает только эти два значения (register.h WordOrderFromName,
 // README «Возможные значения: big_endian (по умолчанию), little_endian»);
 // любое другое молча становится big-endian.
@@ -84,15 +90,24 @@ function parseErrorValue(v) {
 // диапазон после этого не длиннее max_read_registers. Регистры просматриваются по
 // возрастанию адреса — AddRegister отклоняет всё, что ниже начала диапазона.
 function readRanges(channels, device) {
+    // holding, input, coil и discrete — разные адресные пространства Modbus,
+    // драйвер опрашивает их отдельными запросами и не склеивает между типами.
     var regs = [];
     channels.forEach(function (ch) {
-        regs.push({ addr: ch.address, words: regWords(ch), id: ch.id });
+        regs.push({
+            addr: ch.address,
+            words: regWords(ch),
+            id: ch.id,
+            type: ch.reg_type || 'holding'
+        });
     });
-    regs.sort(function (a, b) { return a.addr - b.addr || a.words - b.words; });
+    regs.sort(function (a, b) {
+        if (a.type !== b.type) return a.type < b.type ? -1 : 1;
+        return a.addr - b.addr || a.words - b.words;
+    });
 
     var maxHole = device.max_reg_hole || 0;
-    var maxRead = device.max_read_registers || DEFAULT_MAX_READ;
-    if (maxRead > MAX_READ_REGISTERS) maxRead = MAX_READ_REGISTERS;
+    var maxRead = effectiveMaxRead(device.max_read_registers);
 
     var ranges = [];
     var current = null;
@@ -102,7 +117,8 @@ function readRanges(channels, device) {
                 current.ids.push(r.id); // регистр внутри уже читаемого диапазона
                 return;
             }
-            if (r.addr >= current.start &&
+            if (r.type === current.type &&
+                r.addr >= current.start &&
                 current.start + current.count + maxHole >= r.addr &&
                 r.addr + r.words - current.start <= maxRead) {
                 current.count = Math.max(current.count, r.addr + r.words - current.start);
@@ -110,7 +126,7 @@ function readRanges(channels, device) {
                 return;
             }
         }
-        current = { start: r.addr, count: r.words, ids: [r.id] };
+        current = { start: r.addr, count: r.words, ids: [r.id], type: r.type };
         ranges.push(current);
     });
     return ranges;
@@ -131,9 +147,7 @@ function check(file) {
     }
     if (!tpl.device_type) fail(errors, 'не задан device_type');
     if (!dev.id) fail(errors, 'не задан device.id');
-    // 0 и значения больше 125 драйвер приводит к 125 (README, max_read_registers)
-    var maxRead = dev.max_read_registers || DEFAULT_MAX_READ;
-    if (maxRead > MAX_READ_REGISTERS) maxRead = MAX_READ_REGISTERS;
+    var maxRead = effectiveMaxRead(dev.max_read_registers);
 
     var byId = {};
     var byAddr = {};
@@ -142,8 +156,8 @@ function check(file) {
         var where = (ch.id || ch.name || '?');
 
         if (!ch.id) fail(errors, where + ': нет id');
-        else if (byId[ch.id] !== undefined) fail(errors, 'дубль id: ' + ch.id);
-        else byId[ch.id] = ch.address;
+        else if (byId[ch.id]) fail(errors, 'дубль id: ' + ch.id);
+        else byId[ch.id] = true;
 
         if (!FORMATS[ch.format]) {
             fail(errors, where + ': неизвестный формат "' + ch.format + '" (драйвер молча прочитает u16)');
@@ -207,7 +221,7 @@ function check(file) {
     }
 
     var ranges = readRanges(dev.channels.filter(function (ch) {
-        return FORMATS[ch.format];
+        return FORMATS[ch.format] && typeof ch.address === 'number' && ch.address >= 0;
     }), dev);
 
     var covered = {};
@@ -228,7 +242,8 @@ function check(file) {
     console.log('каналов: ' + dev.channels.length + ', групп чтения: ' + ranges.length +
         ', max_read_registers: ' + maxRead + ', max_reg_hole: ' + (dev.max_reg_hole || 0));
     ranges.forEach(function (r) {
-        console.log('  ' + r.start + '..' + (r.start + r.count - 1) + ' (' + r.count +
+        console.log('  ' + (r.type === 'holding' ? '' : r.type + ' ') +
+            r.start + '..' + (r.start + r.count - 1) + ' (' + r.count +
             ' рег.): ' + r.ids.join(', '));
     });
 
@@ -253,11 +268,17 @@ function bitsFit(v, fmt) {
 module.exports = { check: check, readRanges: readRanges, regWords: regWords };
 
 if (require.main === module) {
-    var file = process.argv[2];
-    if (!file) {
-        console.error('usage: node tests/modbus-template-check.js <templates/config-*.json>');
+    var files = process.argv.slice(2);
+    if (!files.length) {
+        console.error('usage: node tests/modbus-template-check.js <templates/*.json> [ещё файлы]');
         process.exit(2);
     }
-    var errs = check(file);
-    process.exit(errs.length ? 1 : 0);
+    var failed = 0;
+    files.forEach(function (file) {
+        if (check(file).length) failed++;
+    });
+    if (files.length > 1) {
+        console.log(failed ? failed + ' шаблон(ов) с ошибками' : 'ok, шаблонов проверено: ' + files.length);
+    }
+    process.exit(failed ? 1 : 0);
 }

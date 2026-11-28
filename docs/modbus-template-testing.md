@@ -7,8 +7,8 @@
 ## Статическая проверка
 
 ```bash
-node tests/modbus-template-check.js templates/config-victron-solarcharger.json
-node tests/modbus-template-check.test.js   # проверка самой проверки
+node tests/modbus-template-check.js templates/*.json   # можно несколько файлов
+node tests/modbus-template-check.test.js               # проверка самой проверки
 ```
 
 Обе команды и прогон по всем `templates/config-*.json` выполняет CI
@@ -29,7 +29,9 @@ node tests/modbus-template-check.test.js   # проверка самой про�
 - `max_read_registers` и `max_reg_hole` разбираются как в драйвере: `0` и значения больше
   125 приводятся к 125, а если параметр не задан вовсе — действует умолчание 1 (README
   драйвера, раздел про параметры устройства);
-- группировку регистров в запросы по правилам `AddRegister` из `src/modbus_common.cpp`:
+- группировку регистров в запросы по правилам `AddRegister` из `src/modbus_common.cpp`
+  (внутри одного адресного пространства: `holding`, `input`, `coil` и `discrete` —
+  разные пространства, между ними драйвер запросы не склеивает):
   регистр попадает в текущий диапазон, если отделён дырой не больше `max_reg_hole` и
   диапазон после этого не длиннее `max_read_registers`. Печатается карта групп с полным
   составом каналов; канал, не попавший ни в одну группу, — ошибка.

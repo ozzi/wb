@@ -29,7 +29,7 @@ node tests/delta-temp.test.js
 `error_value`, `word_order`, перекрытия адресов и размер групп чтения.
 
 ```bash
-node tests/modbus-template-check.js templates/config-victron-solarcharger.json
+node tests/modbus-template-check.js templates/*.json   # принимает несколько файлов
 node tests/modbus-template-check.test.js
 ```
 

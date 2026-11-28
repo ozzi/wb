@@ -76,6 +76,12 @@ expectErrors('dup-id.json', baseDevice([
     ch('a', 100, 'u16'), ch('a', 101, 'u16')
 ]), /дубль id/);
 
+// дубль id ловится и тогда, когда адрес у канала не задан вообще
+expectErrors('dup-id-no-addr.json', baseDevice([
+    { name: 'a', id: 'a', reg_type: 'holding', format: 'u16' },
+    { name: 'a', id: 'a', reg_type: 'holding', format: 'u16', address: 100 }
+]), /дубль id/);
+
 expectErrors('dup-addr.json', baseDevice([
     ch('a', 100, 'u16'), ch('b', 100, 'u16')
 ]), /адрес 100 уже занят/);
@@ -123,10 +129,29 @@ expectOk('max-read-clamped.json', baseDevice([
     ch('a', 100, 'u16')
 ], { max_read_registers: 150 }));
 
+// ...и 0 означает именно 125, а не умолчание 1: иначе 32-битные каналы
+// получат ложное «группа длиннее max_read_registers»
+expectOk('max-read-zero.json', baseDevice([
+    ch('a', 100, 'float', { word_order: 'little_endian' }),
+    ch('b', 102, 'float', { word_order: 'little_endian' })
+], { max_read_registers: 0, max_reg_hole: 0 }));
+
+// holding и input — разные адресные пространства, склеивать их нельзя
+var mixed = {
+    device_type: 't', device: { id: 't', max_read_registers: 7, max_reg_hole: 3, channels: [
+        ch('a', 100, 'u16', { reg_type: 'holding' }),
+        ch('b', 101, 'u16', { reg_type: 'input' })
+    ] }
+};
+var mixedRanges = checker.readRanges(mixed.device.channels, mixed.device);
+assert.strictEqual(mixedRanges.length, 2, 'holding и input должны попасть в разные группы');
+passed++;
+
 expectErrors('empty.json', { device_type: 't', device: { id: 't', channels: [] } }, /нет device.channels/);
 
 // --- реальные шаблоны в репозитории ---------------------------------------
-['templates/config-victron-solarcharger.json', 'templates/config-victron-venus-system.json']
+['templates/config-victron-solarcharger.json', 'templates/config-victron-venus-system.json',
+ 'templates/owen-trm12-v7.json']
     .forEach(function (f) {
         var errs = checker.check(path.join(__dirname, '..', f));
         assert.strictEqual(errs.length, 0, f + ': ' + errs.join(' | '));

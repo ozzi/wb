@@ -11,6 +11,15 @@ on:
   pull_request:
     branches: [main]
 
+# Тестам нужен только код: права токена сужены до чтения.
+permissions:
+  contents: read
+
+# Несколько пушей подряд в одну ветку — актуален только последний прогон.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -34,7 +43,5 @@ jobs:
       - name: Проверка шаблонов Modbus
         run: |
           node tests/modbus-template-check.test.js
-          for f in templates/config-*.json; do
-            echo "== $f"
-            node tests/modbus-template-check.js "$f"
-          done
+          # все шаблоны папки: проверяльщик не завязан на имя файла
+          node tests/modbus-template-check.js templates/*.json
