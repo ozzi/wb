@@ -1,0 +1,118 @@
+{
+    "device_type": "victron-solarcharger",
+    "group": "g-custom",
+    "device": {
+        "name": "Victron Solar Charger",
+        "id": "victron-solar",
+        "max_read_registers": 7,
+        "max_reg_hole": 3,
+        "response_timeout_ms": 500,
+        "channels": [
+            {
+                "name": "Battery voltage",
+                "id": "battery-voltage",
+                "reg_type": "holding",
+                "address": 771,
+                "format": "u16",
+                "scale": 0.01,
+                "units": "V",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Battery current",
+                "id": "battery-current",
+                "reg_type": "holding",
+                "address": 772,
+                "format": "s16",
+                "scale": 0.1,
+                "units": "A",
+                "error_value": "0x7FFF",
+                "readonly": true
+            },
+            {
+                "name": "Charge state",
+                "id": "charge-state",
+                "reg_type": "holding",
+                "address": 775,
+                "format": "u16",
+                "enum": [0, 2, 3, 4, 5, 6, 7, 11, 245, 252],
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "PV voltage",
+                "id": "pv-voltage",
+                "reg_type": "holding",
+                "address": 776,
+                "format": "u16",
+                "scale": 0.01,
+                "units": "V",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Yield today",
+                "id": "yield-today",
+                "reg_type": "holding",
+                "address": 784,
+                "format": "u16",
+                "scale": 0.1,
+                "units": "kWh",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Maximum charge power today",
+                "id": "max-charge-power-today",
+                "reg_type": "holding",
+                "address": 785,
+                "format": "u16",
+                "units": "W",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Yield yesterday",
+                "id": "yield-yesterday",
+                "reg_type": "holding",
+                "address": 786,
+                "format": "u16",
+                "scale": 0.1,
+                "units": "kWh",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "Error code",
+                "id": "error-code",
+                "reg_type": "holding",
+                "address": 788,
+                "format": "u16",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "PV power",
+                "id": "pv-power",
+                "reg_type": "holding",
+                "address": 789,
+                "format": "u16",
+                "scale": 0.1,
+                "units": "W",
+                "error_value": "0xFFFF",
+                "readonly": true
+            },
+            {
+                "name": "MPP operation mode",
+                "id": "mpp-mode",
+                "reg_type": "holding",
+                "address": 791,
+                "format": "u16",
+                "enum": [0, 1, 2, 255],
+                "error_value": "0xFFFF",
+                "readonly": true
+            }
+        ]
+    }
+}

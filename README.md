@@ -22,3 +22,15 @@ node tests/delta-temp.test.js
 Сторож сценариев проверяется с подменой `Date.now()`: прогрев, ожидание 5 минут и
 тормоз за 6 часов иначе не воспроизвести. Правило экспортирует `tickAll`/`tick`/`CFG`/
 `STATE` только под Node; на контроллере `module` нет, и оно работает как обычно.
+
+## Шаблоны Modbus TCP
+
+Шаблоны в `templates/` проверяются отдельным скриптом: дубли `id`, форматы,
+`error_value`, `word_order`, перекрытия адресов и размер групп чтения.
+
+```bash
+node tests/modbus-template-check.js templates/config-victron-solarcharger.json
+node tests/modbus-template-check.test.js
+```
+
+Как проверять шаблон без устройства (эмулятор Modbus) — `docs/modbus-template-testing.md`.
