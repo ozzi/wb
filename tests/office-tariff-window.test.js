@@ -91,11 +91,16 @@ check("в полупике 19:00 — ближайшая граница 20:00, н
   assert.strictEqual(n.heat, false);
   assert.strictEqual(n.heatNow, true);
 });
-check("в полупике 22:30 — границ до конца суток нет", function () {
-  assert.strictEqual(m.nextSwitch(22 * 60 + 30), null);
+check("в полупике 22:30 — граница завтра 08:00, нагрев запрещается", function () {
+  var n = m.nextSwitch(22 * 60 + 30);
+  assert.strictEqual(n.minutes, 8 * 60 + 1440);
+  assert.strictEqual(n.heat, false);
+  assert.strictEqual(n.tomorrow, true);
 });
-check("в ночи 23:30 — границ до конца суток нет", function () {
-  assert.strictEqual(m.nextSwitch(23 * 60 + 30), null);
+check("в ночи 23:30 — граница завтра 08:00", function () {
+  var n = m.nextSwitch(23 * 60 + 30);
+  assert.strictEqual(n.minutes, 8 * 60 + 1440);
+  assert.strictEqual(n.tomorrow, true);
 });
 
 console.log("Длительность пика за сутки:");

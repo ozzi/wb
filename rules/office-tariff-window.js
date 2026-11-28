@@ -76,22 +76,29 @@ function toTimeStr(totalMinutes) {
     return pad2(Math.floor(m / 60)) + ':' + pad2(m % 60);
 }
 
-// Ближайшая граница смены «греть / не греть» внутри суток.
-// Возвращает {minutes, heat} или null, если границ впереди нет.
+// Ближайшая граница смены «греть / не греть».
+// Возвращает {minutes, heat, heatNow, tomorrow}. Границы после полуночи
+// отдаются как «завтра» (minutes > 1440), иначе вечером витрина пустеет
+// на два часа и выглядит как сбой расчёта.
 function nextSwitch(minutes) {
     var heatNow = zoneAt(minutes) !== ZONE_PEAK;
-    var best = null;
     var edges = [8 * 60, 11 * 60, 20 * 60, 22 * 60];
     for (var i = 0; i < edges.length; i++) {
         if (edges[i] > minutes) {
-            best = edges[i];
-            break;
+            return {
+                minutes: edges[i],
+                heat: zoneAt(edges[i]) !== ZONE_PEAK,
+                heatNow: heatNow,
+                tomorrow: false
+            };
         }
     }
-    if (best === null) {
-        return null;
-    }
-    return { minutes: best, heat: zoneAt(best) !== ZONE_PEAK, heatNow: heatNow };
+    return {
+        minutes: edges[0] + 1440,
+        heat: zoneAt(edges[0]) !== ZONE_PEAK,
+        heatNow: heatNow,
+        tomorrow: true
+    };
 }
 
 function localMinutesOfDay(localMs) {
@@ -116,6 +123,12 @@ defineVirtualDevice(CFG.dev, {
             title: 'Ручной режим до конца суток',
             type: 'switch',
             value: false
+        },
+        manual_day: {
+            title: 'Ручной режим включён (дата)',
+            type: 'text',
+            value: '',
+            readonly: true
         },
         heating_allowed: {
             title: 'Нагрев разрешён',
@@ -145,9 +158,9 @@ defineVirtualDevice(CFG.dev, {
 });
 
 var state = {
-    applied: null,    // что правило само применило к сценарию (null — неизвестно)
-    dayKey: '',
-    lastReason: ''
+    applied: null,      // что правило само применило к сценарию (null — неизвестно)
+    lastReason: '',
+    noScenario: false   // внешний канал rule_enabled не виден
 };
 
 // ---------- управление сценарием ----------
@@ -177,15 +190,39 @@ function setCell(control, value) {
 function tick() {
     var localMs = Date.now() + CFG.tzOffsetMin * 60000;
     var minutes = localMinutesOfDay(localMs);
-
-    // Новые сутки — ручной режим снимается сам.
     var key = dayKeyOf(localMs);
-    if (key !== state.dayKey) {
-        state.dayKey = key;
-        if (dev[CFG.dev + '/manual']) {
-            setCell('manual', false);
+
+    // Внешний канал может исчезнуть (сценарий переименовали, шлейф отвалился).
+    // Без проверки правило молча ретраило бы запись каждые 30 с, а витрина
+    // показывала бы штатное состояние при неработающем управлении.
+    if (dev[CFG.vd + '/rule_enabled'] === undefined) {
+        setCell('reason', 'нет сценария ' + CFG.vd);
+        setCell('next_event', '');
+        if (!state.noScenario) {
+            state.noScenario = true;
+            log.error('офис по тарифу: не найден ' + CFG.vd + '/rule_enabled — управление нагревом не работает');
+        }
+        return;
+    }
+    if (state.noScenario) {
+        state.noScenario = false;
+        log.info('офис по тарифу: сценарий снова виден, управление восстановлено');
+    }
+
+    // Ручной режим живёт до конца суток. Дата включения берётся из ячейки VD:
+    // значения ячеек переживают рестарт wb-rules, а state в памяти — нет,
+    // иначе первый тик после деплоя сбрасывал бы выбор пользователя.
+    var manualDay = dev[CFG.dev + '/manual_day'];
+    if (dev[CFG.dev + '/manual'] === true) {
+        if (!manualDay) {
+            setCell('manual_day', key);          // только что включили руками
+        } else if (manualDay !== key) {
+            setCell('manual', false);            // сутки сменились
+            setCell('manual_day', '');
             log.info('офис по тарифу: ручной режим сброшен, новые сутки ' + key);
         }
+    } else if (manualDay) {
+        setCell('manual_day', '');               // выключили руками
     }
 
     var zone = zoneAt(minutes);
@@ -201,7 +238,10 @@ function tick() {
         reason = 'ручной режим до конца суток';
     } else if (zone === ZONE_PEAK) {
         shouldHeat = false;
-        reason = 'пик тарифа (' + toTimeStr(minutes) + ')';
+        // Времени в строке нет намеренно: reason участвует в сравнении
+        // «ничего не изменилось», а с минутами он менялся бы каждый тик
+        // и публиковал в MQTT новое значение каждую минуту.
+        reason = 'пик тарифа';
     } else {
         shouldHeat = true;
         reason = zone === ZONE_NIGHT ? 'ночь, нагрев по термостату' : 'полупик, нагрев по термостату';
@@ -212,12 +252,8 @@ function tick() {
     setCell('reason', reason);
 
     var next = nextSwitch(minutes);
-    if (next) {
-        setCell('next_event', (next.heat ? 'включить нагрев ' : 'отключить нагрев ') +
-            toTimeStr(next.minutes));
-    } else {
-        setCell('next_event', '');
-    }
+    setCell('next_event', (next.tomorrow ? 'завтра ' : '') +
+        (next.heat ? 'включить нагрев ' : 'отключить нагрев ') + toTimeStr(next.minutes));
 
     if (state.applied === shouldHeat && reason === state.lastReason) {
         return;
