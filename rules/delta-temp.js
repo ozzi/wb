@@ -1,8 +1,16 @@
-// Version: 2
-// ΔT контуров тёплого пола: подача − обратка, с поправками на накладной монтаж.
+// Version: 3
+// ΔT контуров тёплого пола и первичного кольца: подача − обратка, с поправками
+// на накладной монтаж.
 //
-// Источники: wb-ms_203 (ТП 1Э) и wb-ms_25 (ТП 2Э),
-// External Sensor 1 = подача, External Sensor 2 = обратка (накладной датчик).
+// v3: WB-MS 203 переведён на шаблон «WB-MS v.2 (fw 4.36)» — каналы по-датчиковые,
+// по две ячейки на вход. Раскладка (задаётся порядком ID при привязке датчиков):
+//   wb-ms_203/bus1_temp1 = подача ТП 1Э,  bus1_temp2 = обратка ТП 1Э
+//   wb-ms_203/bus2_temp1 = подача кольца, bus2_temp2 = обратка кольца
+// Имена каналов в MQTT — busN_tempK (в веб-UI подписаны «Temperature N:K»).
+// ТП 2Э остаётся на старом шаблоне wb-ms_25:
+//   External Sensor 1 = подача, External Sensor 2 = обратка.
+// Если знак ΔT на контуре отрицательный — перепутаны ячейки 1:1/1:2 (или 2:1/2:2),
+// это порядок привязки ID, а не инверсия логики.
 //
 // v2: каналы offset_inlet / offset_outlet — смещение каждого датчика в K,
 // прибавляется к показанию перед вычитанием:
@@ -14,6 +22,14 @@
 // то есть пара датчиков ТП 2Э сходится в пределах ±0,25 K. Значение поправки
 // задаётся каналом offset_* по результату калибровки (оба датчика на одну трубу
 // или останов насоса), а не переносится из наблюдений за плато.
+
+// При отсутствии датчика в ячейке шаблон WB-MS v2 fw 4.36 отдаёт ровно 0,
+// а не ошибку. Ноль для воды в петлях — признак «датчика нет»: 0.0 °C на подаче
+// и обратке одновременно физически не встречается, а честный ноль DS18B20 даёт
+// 0.0625. Поэтому 0 и выход за рабочий диапазон считаем недостоверными.
+function plausible(t) {
+  return typeof t === "number" && !isNaN(t) && t !== 0 && t > -40 && t < 95;
+}
 
 function makeDeltaTemp(name, title, inletTopic, outletTopic, offsetInlet, offsetOutlet) {
   var deviceName = "delta-temp-" + name;
@@ -53,7 +69,7 @@ function makeDeltaTemp(name, title, inletTopic, outletTopic, offsetInlet, offset
   function recalc() {
     var a = dev[inletTopic];
     var b = dev[outletTopic];
-    if (typeof a !== "number" || typeof b !== "number" || isNaN(a) || isNaN(b)) {
+    if (!plausible(a) || !plausible(b)) {
       // ячейки остаются на последнем значении, поэтому потребитель (ПИД) смотрит
       // не на delta, а на флаг valid — иначе он считает по застывшему числу
       setError("r");
@@ -84,6 +100,13 @@ function makeDeltaTemp(name, title, inletTopic, outletTopic, offsetInlet, offset
 }
 
 makeDeltaTemp("underfloor-1", "ΔT ТП 1Э",
-  "wb-ms_203/External Sensor 1", "wb-ms_203/External Sensor 2", 0, 0);
+  "wb-ms_203/bus1_temp1", "wb-ms_203/bus1_temp2", 0, 0);
+makeDeltaTemp("primary-ring", "ΔT первичного кольца",
+  "wb-ms_203/bus2_temp1", "wb-ms_203/bus2_temp2", 0, 0);
 makeDeltaTemp("underfloor-2", "ΔT ТП 2Э",
   "wb-ms_25/External Sensor 1", "wb-ms_25/External Sensor 2", 0, 0);
+
+// Для тестов без контроллера (tests/delta-temp.test.js). На WB module отсутствует.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { plausible: plausible, makeDeltaTemp: makeDeltaTemp };
+}

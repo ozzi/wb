@@ -223,8 +223,10 @@ function makeDeltaPid(name, title, deltaTopic, inletTopic, powerDevice) {
   cycle();
 }
 
+// Подача ТП 1Э: с v3 delta-temp.js wb-ms_203 живёт на шаблоне WB-MS v2 (fw 4.36),
+// где каналы по-датчиковые. Старого External Sensor 1 у устройства больше нет.
 makeDeltaPid("underfloor-1", "ПИД насоса ТП 1Э (по ΔT)",
-  "delta-temp-underfloor-1/delta", "wb-ms_203/External Sensor 1",
+  "delta-temp-underfloor-1/delta", "wb-ms_203/bus1_temp1",
   "pump-pwm-controller-underfloor-heating-1");
 makeDeltaPid("underfloor-2", "ПИД насоса ТП 2Э (по ΔT)",
   "delta-temp-underfloor-2/delta", "wb-ms_25/External Sensor 1",

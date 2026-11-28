@@ -10,6 +10,8 @@ wirenboard templates and rules
 ```bash
 node tests/heat-loss.test.js
 node tests/scenario-keepalive.test.js
+node tests/office-tariff-window.test.js
+node tests/delta-temp.test.js
 ```
 
 Глобалы wb-rules (`dev`, `defineVirtualDevice`, `defineRule`, `cron`) в тесте подменяются
