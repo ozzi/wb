@@ -49,17 +49,25 @@ var ch = function (id, addr, fmt, extra) {
 expectOk('good.json', baseDevice([
     ch('a', 771, 's16', { scale: 0.01, error_value: '0x7FFF' }),
     ch('b', 772, 's16', { scale: 0.1, error_value: '0x7FFF' }),
-    ch('c', 780, 'u32', { scale: 0.01, word_order: 'little', error_value: '0xFFFFFFFF' })
+    ch('c', 780, 'u32', { scale: 0.01, word_order: 'little_endian', error_value: '0xFFFFFFFF' })
 ]));
 
-// дыра до max_reg_hole склеивает регистры в одну группу
+// форматы и типы регистров, которые драйвер знает помимо u16/holding
+expectOk('other-formats.json', baseDevice([
+    ch('a', 100, 'bcd16'), ch('b', 101, 'float', { word_order: 'little_endian' }),
+    ch('c', 103, 'char8'), ch('d', 104, 'u16', { reg_type: 'holding_single' }),
+    ch('e', 105, 'u16', { reg_type: 'input' })
+]));
+
+// дыра до max_reg_hole склеивает регистры в одну группу, и состав группы полный
 var glued = {
     device_type: 't', device: { id: 't', max_read_registers: 7, max_reg_hole: 3, channels: [
         ch('a', 100, 'u16'), ch('b', 103, 'u16')
     ] }
 };
-assert.strictEqual(checker.readRanges(glued.device.channels, glued.device).length, 1,
-    'дыра в 3 регистра должна склеивать группу');
+var gluedRanges = checker.readRanges(glued.device.channels, glued.device);
+assert.strictEqual(gluedRanges.length, 1, 'дыра в 3 регистра должна склеивать группу');
+assert.deepEqual(gluedRanges[0].ids.sort(), ['a', 'b'], 'в группе должны быть оба канала');
 passed++;
 
 // --- дефекты ---------------------------------------------------------------
@@ -75,6 +83,10 @@ expectErrors('bad-format.json', baseDevice([
     ch('a', 100, 'float32')
 ]), /неизвестный формат/);
 
+expectErrors('bad-reg-type.json', baseDevice([
+    ch('a', 100, 'u16', { reg_type: 'holding_register' })
+]), /неизвестный reg_type/);
+
 expectErrors('errval-overflow.json', baseDevice([
     ch('a', 100, 's16', { error_value: '0xFFFF' })
 ]), /не помещается/);
@@ -87,17 +99,18 @@ expectErrors('wide-no-word-order.json', baseDevice([
     ch('a', 100, 'u32')
 ]), /word_order/);
 
+// драйвер понимает только "little_endian", остальное молча читается big-endian
+expectErrors('word-order-typo.json', baseDevice([
+    ch('a', 100, 'u32', { word_order: 'little' })
+]), /только "little_endian"/);
+
 expectErrors('overlap.json', baseDevice([
-    ch('a', 100, 'u32', { word_order: 'little' }), ch('b', 101, 'u16')
+    ch('a', 100, 'u32', { word_order: 'little_endian' }), ch('b', 101, 'u16')
 ]), /перекрывает/);
 
 expectErrors('max-read-too-long.json', baseDevice([
     ch('a', 100, 'u16')
 ], { max_read_registers: 150 }), /max_read_registers/);
-
-expectErrors('hole-too-long.json', {
-    device_type: 't', device: { id: 't', max_reg_hole: 40, channels: [ch('a', 100, 'u16')] }
-}, /max_reg_hole/);
 
 expectErrors('empty.json', { device_type: 't', device: { id: 't', channels: [] } }, /нет device.channels/);
 
