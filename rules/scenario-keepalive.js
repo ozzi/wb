@@ -38,7 +38,9 @@
 // обратно в самый дорогой час.
 //
 // Поля для HA (WB сам не пушит): alert_code меняется только когда сценарий
-// реально выключен/вылечен, HA читает его MQTT-триггером и пушит.
+// реально выключен/вылечен, HA читает его MQTT-триггером и пушит. Тревога 1
+// поднимается один раз на инцидент и только если ошибка канала продержалась
+// alertDelayMs: импульс на доли секунды пуш не рождает.
 //   0 — всё в порядке (в т.ч. ручное выключение)
 //   1 — сценарий выключен, сторож ждёт стабилизации
 //   2 — сценарий вылечен (включён обратно)
@@ -50,6 +52,10 @@
 
 var CFG = {
     tickMs: 60 * 1000,
+    // Тревога 1 поднимается, только если ошибка канала продержалась столько.
+    // Импульс на доли секунды — обычный шум опроса шины: он меняет last_error,
+    // но пуша быть не должно.
+    alertDelayMs: 30 * 1000,
     healDelayMs: 5 * 60 * 1000,
     brakeWindowMs: 6 * 60 * 60 * 1000,
     brakeCount: 5,
@@ -93,6 +99,7 @@ var STATE = {
 var store = new PersistentStorage('thermostat-keepalive', { global: true });
 var startedAt = Date.now();
 var pendingHeal = {};   // key -> время попытки включения, ждёт подтверждения
+var errSince = {};      // key -> когда впервые увидели текущую ошибку канала
 
 // ---------- вспомогательное ----------
 
@@ -381,6 +388,8 @@ function trackScenario(t, ruleEnabled, errText) {
     // лучше вернуть сценарий, чем повторить исходный инцидент.
     if (errText !== '' && prev !== '0') {
         store[t.key + '_autoOff'] = '1';
+        // Новый инцидент: тревогу по нему ещё не отправляли.
+        store[t.key + '_alerted'] = '0';
         // Ручное выключение при живой ошибке неотличимо от защиты wb-scenarios.
         // Пишем в лог, чтобы возврат сценария можно было объяснить задним числом.
         log.warning(t.label + ': сценарий выключен при активной ошибке канала — ' +
@@ -459,10 +468,26 @@ function tick(t) {
     if (errText !== '') {
         store[t.key + '_lastErrorAt'] = now;
         setCell(t, 'last_error', fmtTime(now) + ' — ' + errText);
+        if (!errSince[t.key]) {
+            errSince[t.key] = now;
+        }
         if (ruleEnabled === false && store[t.key + '_autoOff'] === '1') {
+            // Одна тревога на инцидент и только если ошибка держится: иначе
+            // импульс на доли секунды при уже выключенном сценарии давал пуш
+            // «сбой связи», который сам гаснул через секунду.
+            var stale = now - errSince[t.key] >= CFG.alertDelayMs;
+            var alerted = store[t.key + '_alerted'] === '1';
+            // Тревога держится, пока живёт инцидент: если гасить её на следующем
+            // тике, HA может не успеть её увидеть, а alert_text затрётся пустой
+            // строкой. Повторной публикации не будет — setCell пишет только
+            // на изменение значения.
+            var code = (stale || alerted) ? 1 : 0;
+            var text = code ? t.label + ': сценарий выключен, связь с каналом потеряна (' + errText + ')' : '';
             setState(t, STATE.CHANNEL_ERROR,
-                'канал в критической ошибке, сценарий выключен из-за неё',
-                1, t.label + ': сценарий выключен, связь с каналом потеряна (' + errText + ')');
+                'канал в критической ошибке, сценарий выключен из-за неё', code, text);
+            if (code) {
+                store[t.key + '_alerted'] = '1';
+            }
         } else if (ruleEnabled === false) {
             setState(t, STATE.CHANNEL_ERROR,
                 'канал в критической ошибке, сценарий выключен вручную', 0, '');
@@ -470,6 +495,10 @@ function tick(t) {
             setState(t, STATE.CHANNEL_ERROR, 'канал в критической ошибке, жду', 0, '');
         }
         return;
+    }
+
+    if (errSince[t.key]) {
+        delete errSince[t.key];
     }
 
     if (ruleEnabled === true) {
@@ -485,9 +514,12 @@ function tick(t) {
 
     var lastErrorAt = loadNum(t.key + '_lastErrorAt');
     if (lastErrorAt && now - lastErrorAt < CFG.healDelayMs) {
+        // Тревогу 1 поднимает ветка ошибки канала — и только на устойчивой ошибке.
+        // Если импульс был короче alertDelayMs, тревоги не было вовсе, и здесь
+        // её тоже не поднимаем: ждать стабилизации — не повод для пуша.
+        // Иначе на один сбой уходило бы два пуша.
         setState(t, STATE.WAITING_STABLE, 'сценарий выключен ' + fmtTime(lastErrorAt) +
-            ', жду стабилизации до ' + fmtTime(lastErrorAt + CFG.healDelayMs),
-            1, t.label + ': сценарий выключен после сбоя связи, слежу');
+            ', жду стабилизации до ' + fmtTime(lastErrorAt + CFG.healDelayMs), 0, '');
         return;
     }
 

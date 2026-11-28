@@ -137,14 +137,21 @@ check("авария: самоотключение -> ожидание -> леч�
   e.dev[OFFICE_ENABLED] = false;   // так сценарий выключает защита wb-scenarios
   e.tick();
   assert.strictEqual(e.store["office_autoOff"], "1", "самоотключение запомнено");
+  assert.strictEqual(alert(e), 0, "импульс короче alertDelayMs — пуш не уходит");
+
+  e.advance(31 * 1000);            // ошибка держится дольше порога
+  e.tick();
   assert.strictEqual(alert(e), 1, "тревога «сценарий выключен»");
+
+  e.tick();                       // следующий тик, ошибка ещё жива
+  assert.strictEqual(alert(e), 1, "тревога не гаснет, пока инцидент не закрыт");
   assert.ok(e.logs.join("\n").indexOf("считаю самоотключением") !== -1,
     "неоднозначный случай отмечен в логе");
 
   e.dev[OFFICE_ERR] = "";
   e.tick();
   assert.strictEqual(state(e), S.WAITING_STABLE, "ждёт стабилизации");
-  assert.strictEqual(alert(e), 1);
+  assert.strictEqual(alert(e), 0, "ожидание не повторяет уже отправленную тревогу");
 
   e.advance(5 * 60000);
   e.tick();
@@ -159,6 +166,25 @@ check("авария: самоотключение -> ожидание -> леч�
   assert.strictEqual(state(e), S.OK, "дальше сценарий работает");
   assert.strictEqual(alert(e), 0);
   assert.strictEqual(e.store["office_autoOff"], "0", "маркер снят");
+});
+
+check("импульсная ошибка при уже выключенном сценарии не поднимает тревогу", function () {
+  var e = makeEnv();
+  e.advance(61000);
+
+  // Сценарий выключен штатно дневным правилом курятника.
+  e.dev[HEN_ENABLED] = false;
+  e.tick();
+  assert.strictEqual(alert(e, "henhouse"), 0, "выключен штатно — тихо");
+
+  e.dev[HEN_ERR] = "r";     // импульс: одна секунда ошибки
+  e.tick();
+  assert.strictEqual(alert(e, "henhouse"), 0, "импульс не пушит");
+
+  e.dev[HEN_ERR] = "";
+  e.tick();
+  assert.strictEqual(alert(e, "henhouse"), 0, "и после снятия ошибки тихо");
+  assert.strictEqual(e.dev[HEN_ENABLED], false, "сценарий не включали обратно");
 });
 
 check("ручное выключение не лечится, даже если ошибка пришла позже", function () {
