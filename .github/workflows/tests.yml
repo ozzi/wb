@@ -1,0 +1,40 @@
+name: Tests
+
+# Проверки, которым не нужен контроллер: расчётные тесты правил (Node, без
+# зависимостей) и статическая проверка шаблонов Modbus. До этого они
+# запускались только руками, и регрессия в правилах или шаблонах
+# обнаруживалась уже на железе.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Тесты правил
+        run: |
+          for f in tests/*.test.js; do
+            case "$f" in
+              tests/modbus-template-check.test.js) continue ;; # свой прогон ниже
+            esac
+            echo "== $f"
+            node "$f"
+          done
+
+      - name: Проверка шаблонов Modbus
+        run: |
+          node tests/modbus-template-check.test.js
+          for f in templates/config-*.json; do
+            echo "== $f"
+            node tests/modbus-template-check.js "$f"
+          done

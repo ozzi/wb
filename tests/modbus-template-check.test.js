@@ -49,7 +49,8 @@ var ch = function (id, addr, fmt, extra) {
 expectOk('good.json', baseDevice([
     ch('a', 771, 's16', { scale: 0.01, error_value: '0x7FFF' }),
     ch('b', 772, 's16', { scale: 0.1, error_value: '0x7FFF' }),
-    ch('c', 780, 'u32', { scale: 0.01, word_order: 'little_endian', error_value: '0xFFFFFFFF' })
+    ch('c', 780, 'u32', { scale: 0.01, word_order: 'little_endian', error_value: '0xFFFFFFFF' }),
+    ch('d', 783, 'u32', { word_order: 'big_endian' })
 ]));
 
 // форматы и типы регистров, которые драйвер знает помимо u16/holding
@@ -102,15 +103,25 @@ expectErrors('wide-no-word-order.json', baseDevice([
 // драйвер понимает только "little_endian", остальное молча читается big-endian
 expectErrors('word-order-typo.json', baseDevice([
     ch('a', 100, 'u32', { word_order: 'little' })
-]), /только "little_endian"/);
+]), /допустимо только/);
+
+// error_value должен попадать в диапазон формата целиком, а не только сверху
+expectErrors('errval-negative.json', baseDevice([
+    ch('a', 100, 'u16', { error_value: '-1' })
+]), /не помещается/);
+
+expectErrors('errval-fraction.json', baseDevice([
+    ch('a', 100, 'u16', { error_value: 0.5 })
+]), /не помещается/);
 
 expectErrors('overlap.json', baseDevice([
     ch('a', 100, 'u32', { word_order: 'little_endian' }), ch('b', 101, 'u16')
 ]), /перекрывает/);
 
-expectErrors('max-read-too-long.json', baseDevice([
+// 0 и больше 125 драйвер приводит к 125 — это не дефект шаблона
+expectOk('max-read-clamped.json', baseDevice([
     ch('a', 100, 'u16')
-], { max_read_registers: 150 }), /max_read_registers/);
+], { max_read_registers: 150 }));
 
 expectErrors('empty.json', { device_type: 't', device: { id: 't', channels: [] } }, /нет device.channels/);
 

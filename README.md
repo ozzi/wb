@@ -33,4 +33,6 @@ node tests/modbus-template-check.js templates/config-victron-solarcharger.json
 node tests/modbus-template-check.test.js
 ```
 
+Всё это гоняет `.github/workflows/tests.yml` на каждый push в `main` и на каждый PR.
+
 Как проверять шаблон без устройства (эмулятор Modbus) — `docs/modbus-template-testing.md`.

@@ -11,19 +11,24 @@ node tests/modbus-template-check.js templates/config-victron-solarcharger.json
 node tests/modbus-template-check.test.js   # проверка самой проверки
 ```
 
+Обе команды и прогон по всем `templates/config-*.json` выполняет CI
+(`.github/workflows/tests.yml`), поэтому регрессия в шаблоне видна в PR, а не на железе.
+
 Скрипт ищет то, что драйвер проглотит молча, а потом отдаст мусор в MQTT:
 
 - дубль `id` канала — два канала с одним именем в MQTT-дереве конфликтуют;
 - неизвестный `format` (драйвер молча читает его как `u16`) и `error_value`, который не
   помещается в разрядность формата;
-- `word_order`: драйвер разбирает **только** значение `little_endian` (`RegisterFormatFromName`-
-  соседняя `WordOrderFromName` в `src/register.h`); всё остальное, включая `little` и
-  `le`, молча становится big-endian. Проверка требует `little_endian` у любого регистра
-  шире 16 бит и отвергает `word_order` у 16-битных как бесполезный;
+- `word_order`: допустимы только `big_endian` и `little_endian` (`WordOrderFromName` в
+  `src/register.h`); всё остальное, включая `little` и `le`, молча читается как
+  big-endian. Проверка требует `word_order` у любого регистра шире 16 бит и отвергает
+  его у 16-битных как бесполезный;
 - неизвестный `reg_type`: драйвер знает `holding`, `holding_single`, `holding_multi`,
   `input`, `coil`, `discrete`, `press_counter` (`src/modbus_device.cpp`);
 - перекрытие адресов друг другом и выход за 0..65535;
-- `max_read_registers` больше предела Modbus 125 — драйвер такое значение не применит;
+- `max_read_registers` и `max_reg_hole` разбираются как в драйвере: `0` и значения больше
+  125 приводятся к 125, а если параметр не задан вовсе — действует умолчание 1 (README
+  драйвера, раздел про параметры устройства);
 - группировку регистров в запросы по правилам `AddRegister` из `src/modbus_common.cpp`:
   регистр попадает в текущий диапазон, если отделён дырой не больше `max_reg_hole` и
   диапазон после этого не длиннее `max_read_registers`. Печатается карта групп с полным

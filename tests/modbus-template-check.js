@@ -38,14 +38,16 @@ var FORMATS = {
 // src/modbus_device.cpp, ModbusRegisterTypes
 var REG_TYPES = ['holding', 'holding_single', 'holding_multi', 'input', 'coil', 'discrete', 'press_counter'];
 
-// MAX_READ_REGISTERS из src/modbus_common.h
+// Предел и умолчания из README драйвера (раздел про параметры устройства):
+// max_read_registers: 0 или больше 125 — драйвер берёт 125; не задано — 1.
 var MAX_READ_REGISTERS = 125;
-// Сколько регистров читает одна группа, если в шаблоне не задано max_read_registers
-var DEFAULT_MAX_READ = 7;
+var DEFAULT_MAX_READ = 1;
 
-// Единственное значение word_order, которое разбирает драйвер (src/register.h
-// WordOrderFromName); всё остальное становится big-endian молча.
-var WORD_ORDER_VALUE = 'little_endian';
+// word_order разбирает только эти два значения (register.h WordOrderFromName,
+// README «Возможные значения: big_endian (по умолчанию), little_endian»);
+// любое другое молча становится big-endian.
+var WORD_ORDERS = ['big_endian', 'little_endian'];
+var WORD_ORDER_LITTLE = 'little_endian';
 
 function fail(errors, msg) {
     errors.push(msg);
@@ -64,7 +66,7 @@ function formatRange(fmt) {
         var hi = Math.pow(2, bits - 1) - 1;
         return -hi - 1 + '..' + hi;
     }
-    return '0..' + Math.pow(2, bits) - 1;
+    return '0..' + (Math.pow(2, bits) - 1);
 }
 
 // error_value в шаблоне — строка "0xFFFF" или число; null — не разбирается
@@ -129,11 +131,7 @@ function check(file) {
     }
     if (!tpl.device_type) fail(errors, 'не задан device_type');
     if (!dev.id) fail(errors, 'не задан device.id');
-    if (dev.max_read_registers !== undefined && dev.max_read_registers > MAX_READ_REGISTERS) {
-        fail(errors, 'max_read_registers=' + dev.max_read_registers +
-            ' больше предела Modbus ' + MAX_READ_REGISTERS + ': драйвер его не применит');
-    }
-
+    // 0 и значения больше 125 драйвер приводит к 125 (README, max_read_registers)
     var maxRead = dev.max_read_registers || DEFAULT_MAX_READ;
     if (maxRead > MAX_READ_REGISTERS) maxRead = MAX_READ_REGISTERS;
 
@@ -168,7 +166,7 @@ function check(file) {
         if (ch.error_value !== undefined) {
             if (ev === null) {
                 fail(errors, where + ': error_value "' + ch.error_value + '" не разбирается');
-            } else if (!FORMATS[ch.format].text && ev > 0 && !bitsFit(ev, ch.format)) {
+            } else if (!FORMATS[ch.format].text && !bitsFit(ev, ch.format)) {
                 fail(errors, where + ': error_value ' + ch.error_value +
                     ' не помещается в ' + ch.format + ' (' + formatRange(ch.format) + ')');
             }
@@ -177,9 +175,9 @@ function check(file) {
         var words = regWords(ch);
         if (words >= 2 && !ch.word_order) {
             fail(errors, where + ': 32-битный регистр без word_order (драйвер прочитает big-endian)');
-        } else if (ch.word_order && ch.word_order !== WORD_ORDER_VALUE) {
-            fail(errors, where + ': word_order "' + ch.word_order + '" — драйвер понимает только "' +
-                WORD_ORDER_VALUE + '", остальное молча читается big-endian');
+        } else if (ch.word_order && WORD_ORDERS.indexOf(ch.word_order) < 0) {
+            fail(errors, where + ': word_order "' + ch.word_order + '" — допустимо только ' +
+                WORD_ORDERS.join(' / ') + ', остальное молча читается big-endian');
         } else if (words === 1 && ch.word_order) {
             fail(errors, where + ': word_order задан для 16-битного регистра, он не применяется');
         }
@@ -242,12 +240,14 @@ function check(file) {
     return [];
 }
 
+// Число должно быть целым и попадать в диапазон формата целиком: для u16
+// отрицательное -1 не помещается, для s16 не помещается 32768.
 function bitsFit(v, fmt) {
+    if (!isFinite(v) || Math.floor(v) !== v) return false;
     var bits = FORMATS[fmt].bytes * 8;
-    if (FORMATS[fmt].signed) {
-        return v < Math.pow(2, bits - 1);
-    }
-    return v < Math.pow(2, bits);
+    var min = FORMATS[fmt].signed ? -Math.pow(2, bits - 1) : 0;
+    var max = FORMATS[fmt].signed ? Math.pow(2, bits - 1) - 1 : Math.pow(2, bits) - 1;
+    return v >= min && v <= max;
 }
 
 module.exports = { check: check, readRanges: readRanges, regWords: regWords };
