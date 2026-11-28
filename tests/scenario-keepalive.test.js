@@ -23,6 +23,7 @@ var OFFICE_ERR = "wb-m1w2_118/External Sensor 1#error";
 var HEN_ENABLED = "wbsc_henhouse2/rule_enabled";
 var HEN_ERR = "wb-m1w2_33/External Sensor 1#error";
 var HEAT_ALLOWED = "kuryatnik-termo-dayoff/heating_allowed";
+var OFFICE_HEAT_ALLOWED = "office-tariff-window/heating_allowed";
 
 // Свежее окружение: заглушки wb-rules, пустые dev/store, загрузка правила.
 function makeEnv() {
@@ -86,6 +87,8 @@ function makeEnv() {
   add("wb-mrm2-mini_46/K2", false);
   add("wb-mrm2-mini_46/K2#error", "");
   add(HEAT_ALLOWED, true);
+  // Офис подавляется тарифным правилом: без этой витрины сторож уходит в NO_CONFIG.
+  add(OFFICE_HEAT_ALLOWED, true);
 
   return {
     rule: rule,
