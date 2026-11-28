@@ -477,11 +477,15 @@ function tick(t) {
             // «сбой связи», который сам гаснул через секунду.
             var stale = now - errSince[t.key] >= CFG.alertDelayMs;
             var alerted = store[t.key + '_alerted'] === '1';
+            // Тревога держится, пока живёт инцидент: если гасить её на следующем
+            // тике, HA может не успеть её увидеть, а alert_text затрётся пустой
+            // строкой. Повторной публикации не будет — setCell пишет только
+            // на изменение значения.
+            var code = (stale || alerted) ? 1 : 0;
+            var text = code ? t.label + ': сценарий выключен, связь с каналом потеряна (' + errText + ')' : '';
             setState(t, STATE.CHANNEL_ERROR,
-                'канал в критической ошибке, сценарий выключен из-за неё',
-                (stale && !alerted) ? 1 : 0,
-                (stale && !alerted) ? t.label + ': сценарий выключен, связь с каналом потеряна (' + errText + ')' : '');
-            if (stale && !alerted) {
+                'канал в критической ошибке, сценарий выключен из-за неё', code, text);
+            if (code) {
                 store[t.key + '_alerted'] = '1';
             }
         } else if (ruleEnabled === false) {
@@ -510,8 +514,10 @@ function tick(t) {
 
     var lastErrorAt = loadNum(t.key + '_lastErrorAt');
     if (lastErrorAt && now - lastErrorAt < CFG.healDelayMs) {
-        // Тревогу 1 уже подняли в момент инцидента; здесь её не повторяем,
-        // иначе на один сбой уходит два пуша.
+        // Тревогу 1 поднимает ветка ошибки канала — и только на устойчивой ошибке.
+        // Если импульс был короче alertDelayMs, тревоги не было вовсе, и здесь
+        // её тоже не поднимаем: ждать стабилизации — не повод для пуша.
+        // Иначе на один сбой уходило бы два пуша.
         setState(t, STATE.WAITING_STABLE, 'сценарий выключен ' + fmtTime(lastErrorAt) +
             ', жду стабилизации до ' + fmtTime(lastErrorAt + CFG.healDelayMs), 0, '');
         return;
