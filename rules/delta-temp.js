@@ -103,10 +103,10 @@ makeDeltaTemp("underfloor-1", "ΔT ТП 1Э",
   "wb-ms_203/bus1_temp1", "wb-ms_203/bus1_temp2", 0, 0);
 makeDeltaTemp("primary-ring", "ΔT первичного кольца",
   "wb-ms_203/bus2_temp1", "wb-ms_203/bus2_temp2", 0, 0);
-// Для тестов без контроллера (tests/delta-temp.test.js). На WB module отсутствует.
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { plausible: plausible, makeDeltaTemp: makeDeltaTemp };
-}
-
 makeDeltaTemp("underfloor-2", "ΔT ТП 2Э",
   "wb-ms_25/External Sensor 1", "wb-ms_25/External Sensor 2", 0, 0);
+
+// Для тестов без контроллера (tests/delta-temp.test.js). На WB module отсутствует.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { plausible: plausible, makeDeltaTemp: makeDeltaTemp };
+}
